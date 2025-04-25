@@ -1,0 +1,7 @@
+# csv logger that comes with REAX
+
+csv:
+  _target_: reax.loggers.CSVLogger
+  save_dir: "${paths.output_dir}"
+  name: "csv/"
+  prefix: ""

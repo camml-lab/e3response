@@ -1,0 +1,95 @@
+_target_: tensorial.ReaxModule
+
+optimizer:
+  _partial_: True
+  _target_: optax.adam
+  learning_rate: 0.001
+
+scheduler:
+  _target_: optax.schedules.cosine_decay_schedule
+  init_value: 0.1
+  decay_steps: 100
+
+loss_fn:
+  _target_: tensorial.gcnn.WeightedLoss
+  weights: [ 1000., 1. ]
+  loss_fns:
+    - _target_: tensorial.gcnn.Loss
+      field: nodes.born_charges_predicted
+      target_field: nodes.born_charges
+
+    - _target_: tensorial.gcnn.Loss
+      field: nodes.raman_tensors_predicted
+      target_field: nodes.raman_tensors
+
+model:
+  _target_: tensorial.nn.Sequential
+  layers:
+    - _target_: tensorial.gcnn.atomic.SpeciesTransform
+      atomic_numbers: ${from_data.atomic_numbers}
+
+    - _target_: tensorial.gcnn.NodewiseEncoding
+      attrs:
+        species:
+          _target_: tensorial.tensors.OneHot
+          num_classes: ${from_data.n_elements}
+
+    - _target_: tensorial.gcnn.EdgeVectors
+
+    - _target_: tensorial.gcnn.EdgewiseEncoding
+      attrs:
+        edge_vectors:
+          _target_: tensorial.tensors.SphericalHarmonic
+          irreps: 0e + 1o
+          normalise: True
+
+    - _target_: tensorial.gcnn.RadialBasisEdgeEncoding
+      r_max: ${r_max}
+
+    - _target_: tensorial.gcnn.NodewiseLinear
+      field: attributes
+      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
+
+    - _target_: tensorial.gcnn.NequipLayer
+      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
+      avg_num_neighbours: ${from_data.avg_num_neighbours}
+
+    - _target_: tensorial.gcnn.NequipLayer
+      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
+      avg_num_neighbours: ${from_data.avg_num_neighbours}
+
+    - _target_: tensorial.gcnn.NequipLayer
+      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
+      avg_num_neighbours: ${from_data.avg_num_neighbours}
+
+    # Keep only scalars and reduce the number passing this point
+    - _target_: tensorial.gcnn.NodewiseLinear
+      irreps_out: 4x0e + 4x0o + 4x1e + 4x1o + 4x2e + 4x2o + 2x3o + 2x3e
+
+    # Per-atom Born effective charge tensor
+    - _target_: tensorial.gcnn.NodewiseLinear
+      irreps_out: 1x0e + 1x1e + 1x2e
+      out_field: born_charges_predicted
+
+    - _target_: tensorial.gcnn.NodewiseDecoding
+      in_field: born_charges_predicted
+      attrs:
+        born_charges_predicted:
+          _target_: tensorial.CartesianTensor
+          formula: ij
+          i: 1o
+          j: 1o
+
+    # Per atom Raman tensors
+    - _target_: tensorial.gcnn.NodewiseLinear
+      irreps_out: 2x1o + 1x2o + 1x3o
+      out_field: raman_tensors_predicted
+
+    - _target_: tensorial.gcnn.NodewiseDecoding
+      in_field: raman_tensors_predicted
+      attrs:
+        raman_tensors_predicted:
+          _target_: tensorial.CartesianTensor
+          formula: ijk=ikj
+          i: 1o
+          j: 1o

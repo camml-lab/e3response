@@ -1,0 +1,73 @@
+_target_: tensorial.ReaxModule
+
+optimizer:
+  _partial_: True
+  _target_: optax.adam
+  learning_rate: 0.001
+
+scheduler:
+  _target_: optax.schedules.cosine_decay_schedule
+  init_value: 0.1
+  decay_steps: 100
+
+loss_fn:
+  _target_: e3md.losses.mlip_loss
+  energy: ${from_data.has_energies}
+  forces: ${from_data.has_forces}
+  energy_weight: 1.0
+  force_weight: 20.0
+
+model:
+  _target_: tensorial.nn.Sequential
+  layers:
+    - _target_: tensorial.gcnn.atomic.SpeciesTransform
+      atomic_numbers: ${from_data.atomic_numbers}
+
+    - _target_: tensorial.gcnn.NodewiseEncoding
+      attrs:
+        species:
+          _target_: tensorial.tensors.OneHot
+          num_classes: ${from_data.n_elements}
+
+    - _target_: tensorial.gcnn.EdgeVectors
+
+    - _target_: tensorial.gcnn.EdgewiseEncoding
+      attrs:
+        edge_vectors:
+          _target_: tensorial.tensors.SphericalHarmonic
+          irreps: 0e + 1o
+          normalise: True
+
+    - _target_: tensorial.gcnn.RadialBasisEdgeEncoding
+      r_max: ${r_max}
+
+    - _target_: tensorial.gcnn.NodewiseLinear
+      field: attributes
+      num_types: ${from_data.n_elements}
+      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
+
+    - _target_: tensorial.gcnn._mace.Mace
+      irreps_out: 0e
+      out_field: energy
+      hidden_irreps: 128x0e + 128x1o
+      num_types: ${from_data.n_elements}
+      avg_num_neighbours: ${from_data.avg_num_neighbours}
+
+    - _target_: tensorial.gcnn.atomic.per_species_rescale
+      num_types: ${from_data.n_elements}
+      scales: ${from_data.force_scale}
+      shifts: ${from_data.energy_shifts}
+      field: nodes.energy  # Per-atom energy
+
+    # Final total energy
+    - _target_: tensorial.gcnn.NodewiseReduce
+      field: energy
+      out_field: predicted_energy  # Global energy
+
+    # Take derivatives to get forces
+    - _target_: tensorial.gcnn.Grad
+      _partial_: True
+      of: globals.predicted_energy
+      wrt: nodes.positions
+      sign: -1
+      out_field: nodes.predicted_forces  # Per-atom force

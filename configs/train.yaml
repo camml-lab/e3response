@@ -1,0 +1,68 @@
+# @package _global_
+
+# specify here default configuration
+# order of defaults determines the order in which configs override each other
+defaults:
+  - _self_
+  - data: bto
+  - model: nequip
+  - listeners: default
+  - logger: csv # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - trainer: default
+  - paths: default
+  - extras: default
+  - hydra: default
+
+  # experiment configs allow for version control of specific hyperparameters
+  # e.g. best hyperparameters for given model and datamodule
+  - experiment: null
+
+  # optional local config for machine/user specific settings
+  # it's optional since it doesn't need to exist and is excluded from version control
+  - optional local: default
+
+  # debugging config (enable through command line, e.g. `python train.py debug=default)
+  - debug: null
+
+# task name, determines output directory path
+task_name: "train"
+
+# tags to help you identify your experiments
+# you can overwrite this in experiment configs
+# overwrite from command line with `python train.py tags="[first_tag, second_tag]"`
+tags: [ "dev" ]
+
+r_max: 5.0
+
+# Gather data use by the model before training
+from_data:
+  n_elements: atomic/num_species
+  atomic_numbers: atomic/all_atomic_numbers
+  avg_num_neighbours: atomic/avg_num_neighbours
+  has_forces:
+    _target_: e3md.stats.Has
+    field: nodes.forces
+  has_energies:
+    _target_: e3md.stats.Has
+    field: globals.energy
+  force_scale: atomic/force_std
+  energy_shifts:
+    _target_: tensorial.gcnn.atomic.EnergyContributionLstsq
+    type_map: ${from_data.atomic_numbers}
+
+# set False to skip model training
+train:
+  min_epochs: 1 # prevents early stopping
+  max_epochs: 400
+  # perform a validation loop every N training epochs
+  check_val_every_n_epoch: 20
+
+# evaluate on test set, using best model weights achieved during training
+# REAX chooses best weights based on the metric specified in checkpoint callback
+test:
+
+# simply provide checkpoint path to resume training
+ckpt_path: null
+
+# seed for random number generators in jax, numpy and python.random
+seed: null

@@ -1,0 +1,5 @@
+_target_: e3response.data.BtoDataModule
+r_max: ${r_max}
+data_dir: ${paths.data_dir}/bto/
+batch_size: 32 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
+train_val_test_split: [0.85, 0.05, 0.1]
