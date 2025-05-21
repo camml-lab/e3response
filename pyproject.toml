@@ -91,6 +91,13 @@ max-line-length = 100
 [tool.black]
 line-length = 100
 
+[tool.doc8]
+max-line-length = 100
+
+[tool.docformatter]
+wrap-summaries = 100
+wrap-descriptions = 100
+
 [tool.pylint.messages_control]
 disable = [
     'duplicate-code',
