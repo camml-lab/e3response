@@ -4,17 +4,16 @@ import os
 import pathlib
 import re
 import tarfile
-from typing import Any, Callable, Final, Optional, Sequence, Union, Iterable
+from typing import Any, Callable, Final, Iterable, Optional, Sequence, Union
 
 import ase
 import ase.io
 from ase.io import espresso
-import numpy as np
 import jraph
+import numpy as np
 import reax
 from tensorial import gcnn
 from typing_extensions import override
-
 
 __all__ = ("BtoDataModule",)
 
