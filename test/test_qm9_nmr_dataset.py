@@ -8,7 +8,8 @@ from e3response.data.qm9_nmr import DATASET_URLS, QM9NmrDataset
 def test_QM9NmrDataset_graphs_contain_expected_keys(dataset_name):
     dataset = QM9NmrDataset(
         dataset=dataset_name,
-        limit=1,
+        atom_keys=["species", "anisotropy"],
+        limit=5,
     )
     assert len(dataset) > 0
 

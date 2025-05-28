@@ -5,7 +5,8 @@ import os
 import pathlib
 import re
 import tempfile
-from typing import Any, Callable, Final, Optional, Sequence, Union
+import types
+from typing import Any, Callable, Final, Optional, Sequence, TypedDict, Union
 import urllib.request
 import zipfile
 
@@ -40,10 +41,10 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
 
     def __init__(
         self,
-        r_max: float = 0.5,
+        r_max: float = 5,
         data_dir: str = "data/qm9_nmr/",
         dataset: Union[str, Sequence[str]] = "gasphase",
-        tensors: Union[str, Sequence[str]] = "NMR_tensors",
+        atom_keys: Optional[Union[str, Sequence[str]]] = None,
         limit: Optional[int] = None,
     ) -> None:
         """
@@ -52,7 +53,7 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         :param r_max: Maximum cutoff radius for graph construction.
         :param data_dir: Directory where dataset archives are stored.
         :param dataset: List of dataset names containing gaussian raw data.
-        :param tensors: Name(s) of tensor(s) to extract, either a string (for one tensor) or a list/tuple of strings.
+        :param atom_keys: name(s) of atom key(s) to extract in the graphs, either a string (for one key) or a list/tuple of strings.
         :param limit: Maximum number of structures to load as graphs.
         """
         super().__init__()
@@ -74,8 +75,33 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         # Params
         self._rmax = r_max
         self._data_dir: Final[str] = data_dir
-        self._tensors = tensors if isinstance(tensors, (list, tuple)) else [tensors]
         self._limit = limit
+        default_keys = ["NMR_tensors", "mask"]
+        possible_keys = [
+            "ind",
+            "N",
+            "species",
+            "isotropic",
+            "anisotropy",
+            "eigenvalues",
+        ]
+
+        if isinstance(atom_keys, str):
+            atom_keys = [atom_keys]
+
+        invalid_keys = [key for key in (atom_keys or []) if key not in possible_keys]
+        if invalid_keys:
+            raise ValueError(
+                f"Invalid atom_keys: {invalid_keys}. " f"Allowed keys are: {possible_keys}"
+            )
+
+        self._atom_keys = list(set(default_keys).union(atom_keys or []))
+
+        self._to_graph: Callable[[ase.Atoms], jraph.GraphsTuple] = functools.partial(
+            gcnn.atomic.graph_from_ase,
+            r_max=self._rmax,
+            atom_include_keys=self._atom_keys,
+        )
 
         # Data
         self._data = []
@@ -89,7 +115,9 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                     with zipfile.ZipFile(archive_path, "r") as zip_ref:
                         zip_ref.testzip()
                 except (zipfile.BadZipFile, zipfile.LargeZipFile, IOError) as e:
-                    print(f"[WARNING] {archive_name} is corrupted or unreadable: {e}")
+                    print(
+                        f"[WARNING] {archive_name} is corrupted or unreadable: {e}"
+                    )  # TODO change all prints with logger levels
                     print("[INFO] Removing corrupted archive ...")
                     os.remove(archive_path)
                     print(f"{archive_name} not found, downloading from {url} ...")
@@ -101,16 +129,10 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                 self._download_file(url, archive_path)
 
             structures = self._extract_archive_zip(archive_path, limit=self._limit)
-
-            to_graph: Callable[[ase.Atoms], jraph.GraphsTuple] = functools.partial(
-                gcnn.atomic.graph_from_ase,
-                r_max=self._rmax,
-                atom_include_keys=(*self._tensors, "mask"),
-            )
-            self._data.extend(list(map(to_graph, structures)))
+            self._data.extend(structures)
 
     def __getitem__(self, index):
-        return self._data[index]
+        return self._to_graph(self._data[index])  # translation in graphs on demand
 
     def __len__(self):
         return len(self._data)
@@ -161,7 +183,7 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                     tmp_log.write(data.decode("utf-8"))
                     tmp_log_path = tmp_log.name
 
-                    structures.append(get_structure_from_log(pathlib.Path(tmp_log_path)))
+                    structures.append(get_structure_and_data_from_log(pathlib.Path(tmp_log_path)))
 
         return structures
 
@@ -183,7 +205,7 @@ def create_molecule_data(log_file):
         shielding_pattern = r"(\d+)\s+([A-Za-z])\s+Isotropic\s+=\s+([-\d\.]+)\s+Anisotropy\s+=\s+([-\d\.]+)\s+XX=\s+([-\d\.]+)\s+YX=\s+([-\d\.]+)\s+ZX=\s+([-\d\.]+)\s+XY=\s+([-\d\.]+)\s+YY=\s+([-\d\.]+)\s+ZY=\s+([-\d\.]+)\s+XZ=\s+([-\d\.]+)\s+YZ=\s+([-\d\.]+)\s+ZZ=\s+([-\d\.]+)\s+Eigenvalues:\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)"
         matches = re.findall(shielding_pattern, log_data)
 
-        tensor_data = []
+        molecule_data = []
         for match in matches:
             (
                 atom_number,
@@ -208,12 +230,12 @@ def create_molecule_data(log_file):
                 " ".join([XX, XY, XZ, YX, YY, YZ, ZX, ZY, ZZ]), dtype=float, sep=" "
             ).reshape(3, 3)
 
-            tensor_data.append(
+            molecule_data.append(
                 {
                     "index": int(atom_number),
-                    "species": atom_type,
+                    "specie": atom_type,
                     "tensor": tensor_matrix,
-                    "isotropy": float(isotropic),
+                    "isotropic": float(isotropic),
                     "anisotropy": float(anisotropy),
                     "eigenvalues": [float(eigenvalue1), float(eigenvalue2), float(eigenvalue3)],
                 }
@@ -222,11 +244,12 @@ def create_molecule_data(log_file):
         # final dictionary
         molecule_data = {
             "structure": structure,
-            "tensor": [tensor["tensor"] for tensor in tensor_data],
-            "isotropy": [tensor["isotropy"] for tensor in tensor_data],
-            "anisotropy": [tensor["anisotropy"] for tensor in tensor_data],
-            "species": [tensor["species"] for tensor in tensor_data],
-            "ind": list(range(len(tensor_data))),
+            "tensor": [atom["tensor"] for atom in molecule_data],
+            "isotropic": [atom["isotropic"] for atom in molecule_data],
+            "anisotropy": [atom["anisotropy"] for atom in molecule_data],
+            "eigenvalues": [atom["eigenvalues"] for atom in molecule_data],
+            "species": [atom["specie"] for atom in molecule_data],
+            "ind": list(range(len(structure))),
             "N": len(structure),
         }
 
@@ -238,7 +261,7 @@ def create_molecule_data(log_file):
         print(f"Error while elaborating file {log_file}: {e}")
 
 
-def get_structure_from_log(log_path: pathlib.Path) -> Optional[ase.Atoms]:
+def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atoms]:
     _LOGGER.info("Parsing Gaussian .log file: %s", log_path)
 
     try:
@@ -259,6 +282,15 @@ def get_structure_from_log(log_path: pathlib.Path) -> Optional[ase.Atoms]:
 
         atoms.arrays["NMR_tensors"] = tensors
         atoms.arrays["mask"] = mask
+        atoms.arrays["ind"] = np.array(ind)
+        atoms.arrays["N"] = np.array(n_atoms)
+        atoms.arrays["species"] = np.array(molecule_data["species"])
+        atoms.arrays["isotropic"] = np.array(molecule_data["isotropic"])
+        atoms.arrays["anisotropy"] = np.array(molecule_data["anisotropy"])
+        atoms.arrays["eigenvalues"] = np.array(molecule_data["eigenvalues"])
+
+        # print(atoms.arrays["anisotropy"])
+
         return atoms
 
     except Exception as e:
@@ -273,10 +305,10 @@ class QM9NmrDataModule(reax.DataModule):
 
     def __init__(
         self,
-        r_max: float = 0.5,
+        r_max: float = 5,
         data_dir: str = "data/qm9_nmr/",
         dataset: Union[str, Sequence[str]] = "gasphase",
-        tensors: Union[str, Sequence[str]] = "NMR_tensors",
+        atom_keys: Optional[Sequence[str]] = None,
         limit: Optional[int] = None,
         train_val_test_split: Sequence[Union[int, float]] = (0.85, 0.05, 0.1),
         batch_size: int = 64,
@@ -297,7 +329,7 @@ class QM9NmrDataModule(reax.DataModule):
         self._rmax = r_max
         self._data_dir: Final[str] = data_dir
         self._dataset: Final[str] = dataset
-        self._tensors = tensors if isinstance(tensors, (list, tuple)) else [tensors]
+        self._atom_keys = atom_keys
         self._limit = limit
         self._train_val_test_split: Final[Sequence[Union[int, float]]] = train_val_test_split
         self._batch_size: Final[int] = batch_size
@@ -326,7 +358,7 @@ class QM9NmrDataModule(reax.DataModule):
             r_max=self._rmax,
             data_dir=self._data_dir,
             dataset=self._dataset,
-            tensors=self._tensors,
+            atom_keys=self._atom_keys,
             limit=self._limit,
         )
 

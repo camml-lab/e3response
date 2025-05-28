@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from reax import Generator
+from reax import Generator, Stage
 
 from e3response.data.qm9_nmr import DATASET_URLS, QM9NmrDataModule
 
@@ -13,8 +13,20 @@ def test_qm9_nmr_dataloader_outputs_correct_graphs(dataset_name):
         batch_size=8,
     )
 
-    class DummyStage:
-        rng = Generator(seed=0)
+    class DummyStage(Stage):
+        def __init__(self):
+            super().__init__(
+                name="dummystage",
+                module=None,
+                strategy=None,
+                rng=Generator(seed=42),
+            )
+
+        def _step(self, batch, state):
+            return {}
+
+        def log(self, state, step_outputs):
+            pass
 
     dm.setup(DummyStage())
 
