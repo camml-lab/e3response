@@ -7,6 +7,7 @@ from hydra.core import hydra_config
 import jraph
 import omegaconf
 import reax.utils
+import tensorial
 
 from . import config, utils
 
@@ -22,7 +23,9 @@ def train(cfg: omegaconf.DictConfig):
     if cfg.get("seed"):
         reax.seed_everything(cfg.seed, workers=True)
 
-    _LOGGER.info(f"Instantiating datamodule <{cfg.data._target_}>")
+    _LOGGER.info(
+        "Instantiating datamodule <%s>", cfg.data._target_  # pylint: disable=protected-access
+    )
     datamodule: reax.DataModule = hydra.utils.instantiate(cfg.data, _convert_="object")
 
     _LOGGER.info("Instantiating listeners...")
@@ -31,17 +34,29 @@ def train(cfg: omegaconf.DictConfig):
     _LOGGER.info("Instantiating loggers...")
     logger: list[reax.Logger] = utils.instantiate_loggers(cfg.get("logger"))
 
-    _LOGGER.info(f"Instantiating trainer <{cfg.trainer._target_}>")
+    _LOGGER.info(
+        "Instantiating trainer <%s>", cfg.trainer._target_  # pylint: disable=protected-access
+    )
     trainer: reax.Trainer = hydra.utils.instantiate(cfg.trainer, listeners=listeners, logger=logger)
 
     if cfg.get("from_data"):
-        trainer.run(
-            utils.from_data.FromData(
+        stage = trainer.run(
+            tensorial.config.FromData(
                 cfg["from_data"], trainer.strategy, trainer.rng, datamodule=datamodule
             )
         )
+        _LOGGER.info(
+            "Calculated from data (these can be used in your config files using "
+            "${from_data.<name>}:\n%s",
+            stage.calculated,
+        )
 
-    _LOGGER.info(f"Instantiating model <{cfg.model._target_}>")
+    # Save the configuration file here, this way things like inputs used to setup the model
+    # will be baked into the input
+    with open(output_dir / config.DEFAULT_CONFIG_FILE, "w", encoding="utf-8") as file:
+        file.write(omegaconf.OmegaConf.to_yaml(cfg, resolve=True))
+
+    _LOGGER.info("Instantiating model <%s>", cfg.model._target_)  # pylint: disable=protected-access
     model: reax.Module = hydra.utils.instantiate(cfg.model, _convert_="object")
 
     object_dict = {
@@ -64,44 +79,6 @@ def train(cfg: omegaconf.DictConfig):
             model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"), **cfg.get("train")
         )
 
-    # Save the configuration file here, this way things like inputs used to setup the model
-    # will be baked into the input
-    with open(output_dir / config.DEFAULT_CONFIG_FILE, "w") as file:
-        file.write(omegaconf.OmegaConf.to_yaml(cfg))
-
-    # bounds = (float("inf"), -float("inf"))
-    # for name, loader in [
-    #     ("train", data_module.train_dataloader()),
-    #     ("validate", data_module.val_dataloader()),
-    # ]:
-    #     labels = []
-    #     predictions = []
-    #     for entry in trainer.predict(mod, dataloaders=loader):
-    #         batch = jraph.unpad_with_graphs(entry)
-    #         energies = batch.globals["energy"][:, 0] / batch.n_node
-    #         labels.extend(energies.tolist())
-    #
-    #         predicted_energies = batch.globals["predicted_energy"].array[:, 0] / batch.n_node
-    #         predictions.extend(predicted_energies.tolist())
-    #
-    #     x = np.array(labels)
-    #     y = np.array(predictions)
-    #
-    #     bounds = (
-    #         min(x.min(), y.min(), bounds[0]) - int(0.1 * y.min()),
-    #         max(x.max(), y.max(), bounds[1]) + int(0.1 * y.max()),
-    #     )
-    #     ax = plt.gca()
-    #
-    #     # Ensure the aspect ratio is square
-    #     ax.set_aspect("equal", adjustable="box")
-    #     plt.plot(x, y, "o", alpha=0.5, ms=10, markeredgewidth=0.0, label=name)
-    #
-    # ax.set_xlim(bounds)
-    # ax.set_ylim(bounds)
-    # ax.legend()
-    # plt.savefig(os.path.join(output_dir, "parity.pdf"), bbox_inches="tight")
-
     train_metrics = trainer.listener_metrics
 
     if cfg.get("test"):
@@ -115,7 +92,7 @@ def train(cfg: omegaconf.DictConfig):
             datamodule=datamodule,
             ckpt_path=ckpt_path,
         )
-        _LOGGER.info(f"Best ckpt path: {ckpt_path}")
+        _LOGGER.info("Best ckpt path: %s", ckpt_path)
 
     test_metrics = trainer.listener_metrics
 

@@ -20,7 +20,7 @@ classifiers = [
     'Programming Language :: Python :: 3.13',
 ]
 keywords = ['machine learning', 'e3nn-jax', 'physics']
-requires-python = '>=3.9'
+requires-python = '>=3.10'
 dependencies = [
     "ase",
     "hydra-core",
@@ -55,6 +55,7 @@ dev = [
     'pre-commit',
     'pylint',
     'black',
+    'wandb',
 ]
 [project.scripts]
 e3response = "e3response.cli:main_cli"
@@ -108,7 +109,19 @@ disable = [
     'too-many-arguments',
     'too-many-instance-attributes',
     'use-dict-literal',
+    'fixme',
 ]
+
+[tool.pylint.design]
+max-locals = 20
+max-positional-arguments = 11
+
+[pytest]
+log_cli = "True"
+log_cli_level = "DEBUG"
+
+[tool.pytest_env]
+XLA_PYTHON_CLIENT_PREALLOCATE = false # Don't allow JAX to preallocate memory
 
 [tool.pytest.ini_options]
 minversion = '6.0'

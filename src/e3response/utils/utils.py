@@ -46,9 +46,11 @@ def task_wrapper(task_func: Callable) -> Callable:
     """Optional decorator that controls the failure behavior when executing the task function.
 
     This wrapper can be used to:
-        - make sure loggers are closed even if the task function raises an exception (prevents multirun failure)
+        - make sure loggers are closed even if the task function raises an exception (prevents
+            multirun failure)
         - save the exception to a `.log` file
-        - mark the run as failed with a dedicated file in the `logs/` folder (so we can find and rerun it later)
+        - mark the run as failed with a dedicated file in the `logs/` folder (so we can find and
+            rerun it later)
         - etc. (adjust depending on your needs)
 
     Example:
@@ -109,7 +111,7 @@ def get_metric_value(metric_dict: dict[str, Any], metric_name: Optional[str]) ->
         return None
 
     if metric_name not in metric_dict:
-        raise Exception(
+        raise ValueError(
             f"Metric value not found! <metric_name={metric_name}>\n"
             "Make sure metric name logged in reax.Module is correct!\n"
             "Make sure `optimized_metric` name in `hparams_search` config is correct!"

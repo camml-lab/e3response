@@ -1,6 +1,5 @@
 import functools
 import logging
-import os
 import pathlib
 import re
 import tarfile

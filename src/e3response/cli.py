@@ -7,7 +7,7 @@ from typing import Final, cast
 
 import hydra
 
-from . import config, eval, train
+from . import config, eval, train  # pylint: disable=redefined-builtin
 
 COMMAND: Final[str] = "command"
 TRAIN: Final[str] = "train"
@@ -70,6 +70,8 @@ def main_cli():
             config_path=str(script_path.parent.absolute()),
             config_name=script_path.stem,
         )(eval.main)
+    else:
+        raise ValueError(f"Unknown command: {args.command}")
 
     # Call Hydra to launch the actual command
     hydra_fn()

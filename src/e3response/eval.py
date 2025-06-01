@@ -22,13 +22,13 @@ def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     assert cfg.ckpt_path
 
-    log.info(f"Instantiating datamodule <{cfg.data._target_}>")
+    log.info(f"Instantiating datamodule <{cfg.data._target_}>")  # pylint: disable=protected-access
     datamodule: reax.DataModule = hydra.utils.instantiate(cfg.data)
 
     log.info("Instantiating loggers...")
     logger: list[reax.Logger] = utils.instantiate_loggers(cfg.get("logger"))
 
-    log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
+    log.info(f"Instantiating trainer <{cfg.trainer._target_}>")  # pylint: disable=protected-access
     trainer: reax.Trainer = hydra.utils.instantiate(cfg.trainer, logger=logger)
 
     with open(cfg.ckpt_path, "rb") as file:
@@ -66,7 +66,7 @@ def main(cfg: DictConfig) -> None:
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     utils.extras(cfg)
 
-    utils.evaluate(cfg)
+    evaluate(cfg)
 
 
 if __name__ == "__main__":

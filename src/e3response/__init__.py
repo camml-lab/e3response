@@ -9,17 +9,11 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import reax
 
-from . import config, keys, metrics, stats
+from . import config, keys
 
 __version__ = "0.1.0"
 
-__all__ = ("config", "metrics", "keys", "stats")
-
-
-reax.metrics.get_registry().register_many(
-    {
-        "atomic/energy_per_atom_rmse": metrics.EnergyPerAtomRmse,
-        "atomic/energy_per_atom_mae": metrics.EnergyPerAtomMae,
-        "atomic/force_rmse": metrics.ForceRmse,
-    }
+__all__ = (
+    "config",
+    "keys",
 )

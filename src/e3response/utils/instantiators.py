@@ -29,7 +29,9 @@ def instantiate_listeners(
 
     for _, cb_conf in listeners_cfg.items():
         if isinstance(cb_conf, omegaconf.DictConfig) and "_target_" in cb_conf:
-            log.info(f"Instantiating listener <{cb_conf._target_}>")
+            log.info(
+                f"Instantiating listener <{cb_conf._target_}>"  # pylint: disable=protected-access
+            )
             listeners.append(hydra.utils.instantiate(cb_conf))
 
     return listeners
@@ -52,7 +54,9 @@ def instantiate_loggers(logger_cfg: omegaconf.DictConfig) -> list[reax.Logger]:
 
     for _, lg_conf in logger_cfg.items():
         if isinstance(lg_conf, omegaconf.DictConfig) and "_target_" in lg_conf:
-            log.info(f"Instantiating logger <{lg_conf._target_}>")
+            log.info(
+                f"Instantiating logger <{lg_conf._target_}>"  # pylint: disable=protected-access
+            )
             logger.append(hydra.utils.instantiate(lg_conf))
 
     return logger

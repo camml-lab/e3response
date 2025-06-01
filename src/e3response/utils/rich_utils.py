@@ -20,7 +20,7 @@ def print_config_tree(
     print_order: Sequence[str] = (
         "data",
         "model",
-        "callbacks",
+        "listeners",
         "logger",
         "trainer",
         "paths",
@@ -32,8 +32,8 @@ def print_config_tree(
     """Prints the contents of a DictConfig as a tree structure using the Rich library.
 
     :param cfg: A DictConfig composed by Hydra.
-    :param print_order: Determines in what order config components are printed. Default is ``("data", "model",
-    "callbacks", "logger", "trainer", "paths", "extras")``.
+    :param print_order: Determines in what order config components are printed. Default is
+        ``("data", "model", "listeners", "logger", "trainer", "paths", "extras")``.
     :param resolve: Whether to resolve reference fields of DictConfig. Default is ``False``.
     :param save_to_file: Whether to export config to the hydra output folder. Default is ``False``.
     """
@@ -44,13 +44,12 @@ def print_config_tree(
 
     # add fields from `print_order` to queue
     for field in print_order:
-        (
+        if field in cfg:
             queue.append(field)
-            if field in cfg
-            else log.warning(
-                f"Field '{field}' not found in config. Skipping '{field}' config printing..."
+        else:
+            log.warning(
+                "Field '%s' not found in config. Skipping '%s' config printing...", field, field
             )
-        )
 
     # add all the other fields to queue (not specified in `print_order`)
     for field in cfg:
@@ -74,7 +73,7 @@ def print_config_tree(
 
     # save config tree to file
     if save_to_file:
-        with open(Path(cfg.paths.output_dir, "config_tree.log"), "w") as file:
+        with open(Path(cfg.paths.output_dir, "config_tree.log"), "w", encoding="utf-8") as file:
             rich.print(tree, file=file)
 
 
@@ -99,5 +98,5 @@ def enforce_tags(cfg: DictConfig, save_to_file: bool = False) -> None:
         log.info(f"Tags: {cfg.tags}")
 
     if save_to_file:
-        with open(Path(cfg.paths.output_dir, "tags.log"), "w") as file:
+        with open(Path(cfg.paths.output_dir, "tags.log"), "w", encoding="utf-8") as file:
             rich.print(cfg.tags, file=file)
