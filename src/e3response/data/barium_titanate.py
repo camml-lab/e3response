@@ -28,7 +28,7 @@ class BtoDataModule(reax.DataModule):
     def __init__(
         self,
         r_max: float,
-        data_dir: str = "data/bto/",
+        data_dir: Union[str, pathlib.Path] = "data/bto/",
         archives: Sequence[str] = (
             "BTO_Pm-3m_5atoms_400K_3x3x3_ensemble.tar.gz",
             "BTO_Pm-3m_5atoms_800K_3x3x3.tar.gz",
@@ -47,7 +47,7 @@ class BtoDataModule(reax.DataModule):
 
         # Params
         self._rmax = r_max
-        self._data_dir: Final[str] = data_dir
+        self._data_dir: Final[str] = str(data_dir)
         self._archives: Final[tuple[str, ...]] = tuple(archives)
         self._tensors = tensors
         self._train_val_test_split: Final[Sequence[Union[int, float]]] = train_val_test_split

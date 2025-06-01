@@ -11,11 +11,17 @@ scheduler:
   decay_steps: 100
 
 loss_fn:
-  _target_: e3md.losses.mlip_loss
-  energy: ${from_data.has_energies}
-  forces: ${from_data.has_forces}
-  energy_weight: 1.0
-  force_weight: 20.0
+  _target_: tensorial.gcnn.WeightedLoss
+  weights: [ 1000., 1. ]
+  loss_fns:
+    - _target_: tensorial.gcnn.Loss
+      field: nodes.born_charges_predicted
+      target_field: nodes.born_charges
+
+    - _target_: tensorial.gcnn.Loss
+      field: nodes.raman_tensors_predicted
+      target_field: nodes.raman_tensors
+
 
 model:
   _target_: tensorial.nn.Sequential
