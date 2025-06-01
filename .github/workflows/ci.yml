@@ -1,57 +1,92 @@
 name: ci
 
-on: [push, pull_request]
+on: [ push, pull_request ]
 
 jobs:
-    pre-commit:
-        runs-on: ubuntu-latest
+   pre-commit:
+      runs-on: ubuntu-latest
+      steps:
+         -  uses: actions/checkout@v2
 
-        steps:
-        -   uses: actions/checkout@v2
-
-        -   name: Set up Python 3.11
+         -  name: Set up Python 3.12
             uses: actions/setup-python@v2
             with:
-                python-version: '3.11'
+               python-version: '3.12'
 
-        -   name: Install Python dependencies
+         -  name: Install Python dependencies
             run: pip install -e .[dev]
 
-        -   name: Run pre-commit
+         -  name: Run pre-commit
             run: pre-commit run --all-files || ( git status --short ; git diff ; exit 1 )
 
-    tests:
-        runs-on: ubuntu-latest
+   # Run pylint separately
+   pylint:
+      name: pylint
+      runs-on: ubuntu-latest
+      timeout-minutes: 10
+      steps:
+         -  uses: actions/checkout@v4
 
-        strategy:
-            fail-fast: false
-            matrix:
-                python-version: ['3.9', '3.10', '3.11', '3.12']
-                include:
-                -   python-version: '3.11'
-                -   python-version: '3.11'
+         -  name: Set up Python ${{ env.DEFAULT_PYTHON }}
+            uses: actions/setup-python@v5.1.1
+            with:
+               python-version: ${{ env.DEFAULT_PYTHON }}
 
+         -  name: Install python dependencies
+            run: pip install -e .[dev,examples]
 
-        steps:
-        -   uses: actions/checkout@v2
+         -  name: Run pylint checks
+            run: |
+               pre-commit run --hook-stage manual pylint-with-spelling --all-files
 
-        -   name: Set up Python ${{ matrix.python-version }}
+   tests:
+      runs-on: ubuntu-latest
+      strategy:
+         fail-fast: false
+         matrix:
+            python-version: [ '3.9', '3.10', '3.11', '3.12' ]
+            include:
+               -  python-version: '3.11'
+               -  python-version: '3.11'
+      steps:
+         -  uses: actions/checkout@v2
+
+         -  name: Set up Python ${{ matrix.python-version }}
             uses: actions/setup-python@v2
             with:
-                python-version: ${{ matrix.python-version }}
+               python-version: ${{ matrix.python-version }}
 
-        -   name: Install Python dependencies
+         -  name: Install Python dependencies
             run: pip install -e .[dev]
 
-        -   name: Run pytest
+         -  name: Run pytest
             run: pytest --cov=e3response -sv -p no:nb_regression test
 
-        -   name: Create xml coverage
+         -  name: Create xml coverage
             run: coverage xml
 
-        -   name: Upload coverage to Codecov
+         -  name: Upload coverage to Codecov
             if: github.repository == 'muhrin/e3response'
             uses: codecov/codecov-action@v2
             with:
-                file: ./coverage.xml
-                name: e3response
+               file: ./coverage.xml
+               name: e3response
+
+
+   publish:
+      name: Publish to PyPI
+      needs: [ pre-commit, pylint, tests ]
+      # Make sure forks don't try to publish and only publish in main
+      if: >
+         github.repository == 'camml-lab/e3response' &&
+         (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+         github.event_name == 'workflow_dispatch'
+      runs-on: ubuntu-latest
+      permissions:
+         contents: write
+      steps:
+         -  uses: etils-actions/pypi-auto-publish@v1
+            with:
+               pypi-token: ${{ secrets.PYPI_API_TOKEN }}
+               gh-token: ${{ secrets.GITHUB_TOKEN }}
+               parse-changelog: false

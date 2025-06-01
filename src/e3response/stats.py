@@ -1,13 +1,11 @@
-from typing import Sequence, Final, Optional, Union, Callable
-
+from typing import Callable, Final, Optional, Sequence, Union
 
 import jraph
 from pytray import tree
 import reax
-from typing_extensions import override
-
 from reax.metrics._metric import OutT
 from tensorial import gcnn
+from typing_extensions import override
 
 _BoolReduce = Callable[[Sequence], bool]
 _Oper = Union[str, _BoolReduce]
