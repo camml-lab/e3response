@@ -11,7 +11,7 @@ from ase.io import espresso
 import jraph
 import numpy as np
 import reax
-from tensorial import gcnn
+from tensorial import gcnn  # pylint: disable=no-name-in-module
 from typing_extensions import override
 
 __all__ = ("BtoDataModule",)

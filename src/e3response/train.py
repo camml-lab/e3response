@@ -41,7 +41,7 @@ def train(cfg: omegaconf.DictConfig):
 
     if cfg.get("from_data"):
         stage = trainer.run(
-            tensorial.config.FromData(
+            tensorial.config.FromData(  # pylint: disable=no-member
                 cfg["from_data"], trainer.strategy, trainer.rng, datamodule=datamodule
             )
         )
