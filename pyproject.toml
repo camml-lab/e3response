@@ -24,6 +24,7 @@ requires-python = '>=3.10'
 dependencies = [
     "ase",
     "hydra-core",
+    "hydra_colorlog",
     'jax',
     'jaxlib',
     'jraph',
@@ -74,6 +75,9 @@ exclude = [
     'examples/',
     'test/',
 ]
+
+[tool.flit.external-data]
+directory = "configs"
 
 [tool.flynt]
 line-length = 100
