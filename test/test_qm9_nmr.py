@@ -22,7 +22,6 @@ def test_qm9mrdataset_graphs_contain_expected_keys(dataset_name):
         assert (
             "NMR_tensors" in graph.nodes
         ), f"Graph {i} lacks 'NMR_tensors' for dataset {dataset_name}"
-        assert "mask" in graph.nodes, f"Graph {i} lacks 'mask' for dataset {dataset_name}"
         assert isinstance(
             graph.nodes["NMR_tensors"], np.ndarray
         ), f"'NMR_tensors' in graph {i} is not a numpy array for dataset {dataset_name}"
@@ -30,12 +29,6 @@ def test_qm9mrdataset_graphs_contain_expected_keys(dataset_name):
             3,
             3,
         ), f"Wrong NMR tensor shape in graph {i} for dataset {dataset_name}"
-        assert isinstance(
-            graph.nodes["mask"], np.ndarray
-        ), f"'mask' in graph {i} is not a numpy array for dataset {dataset_name}"
-        assert (
-            graph.nodes["mask"].dtype == bool
-        ), f"Non boolean 'mask' in graph {i} for dataset {dataset_name}"
 
 
 @pytest.mark.parametrize("dataset_name", list(DATASET_URLS.keys()))
@@ -73,10 +66,8 @@ def test_qm9_nmr_dataloader_outputs_correct_graphs(dataset_name):
         assert hasattr(batch, "nodes"), f"{loader_fn} batch has no 'nodes'"
 
         assert "NMR_tensors" in batch.nodes, f"{loader_fn} batch missing 'NMR_tensors'"
-        assert "mask" in batch.nodes, f"{loader_fn} batch missing 'mask'"
 
         nmr_tensors = batch.nodes["NMR_tensors"]
-        mask = batch.nodes["mask"]
 
         # Shape
         assert isinstance(
@@ -89,10 +80,3 @@ def test_qm9_nmr_dataloader_outputs_correct_graphs(dataset_name):
             3,
             3,
         ), f"Last dims of 'NMR_tensors' must be (3,3), got {nmr_tensors.shape[-2:]}"
-
-        # Check mask
-        assert isinstance(mask, np.ndarray), f"'mask' in {loader_fn} is not a numpy array"
-        assert mask.dtype == bool, f"'mask' in {loader_fn} is not boolean"
-        assert (
-            mask.shape[0] == nmr_tensors.shape[0]
-        ), f"Mask and NMR_tensors batch/atom dims don't match in {loader_fn}"

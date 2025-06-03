@@ -37,7 +37,7 @@ DATASET_URLS = {
 
 
 class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
-    """QM9-NMR dataset in different solvents containing graphs with full NMR tensors, mask and related quantities (optional)"""
+    """QM9-NMR dataset in different solvents containing graphs with full NMR tensors and related quantities (optional)"""
 
     def __init__(
         self,
@@ -76,7 +76,9 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         self._rmax = r_max
         self._data_dir: Final[str] = data_dir
         self._limit = limit
-        default_keys = ["NMR_tensors", "mask"]
+        default_key = [
+            "NMR_tensors",
+        ]
         possible_keys = [
             "ind",
             "N",
@@ -95,7 +97,7 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                 f"Invalid atom_keys: {invalid_keys}. " f"Allowed keys are: {possible_keys}"
             )
 
-        self._atom_keys = list(set(default_keys).union(atom_keys or []))
+        self._atom_keys = list(set(default_key).union(atom_keys or []))
 
         self._to_graph: Callable[[ase.Atoms], jraph.GraphsTuple] = functools.partial(
             gcnn.atomic.graph_from_ase,
@@ -292,11 +294,8 @@ def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atom
 
         tensors = np.zeros((n_atoms, 3, 3))
         tensors[ind] = molecule_data["tensor"]
-        mask = np.zeros(n_atoms, dtype=bool)
-        mask[ind] = True
 
         atoms.arrays["NMR_tensors"] = tensors
-        atoms.arrays["mask"] = mask
         atoms.arrays["ind"] = np.array(ind)
         atoms.arrays["N"] = np.array(n_atoms)
         atoms.arrays["species"] = np.array(molecule_data["species"])
