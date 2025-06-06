@@ -39,12 +39,6 @@ from_data:
   n_elements: atomic/num_species
   atomic_numbers: atomic/all_atomic_numbers
   avg_num_neighbours: atomic/avg_num_neighbours
-  has_forces:
-    _target_: e3md.stats.Has
-    field: nodes.forces
-  has_energies:
-    _target_: e3md.stats.Has
-    field: globals.energy
   force_scale: atomic/force_std
   energy_shifts:
     _target_: tensorial.gcnn.atomic.EnergyContributionLstsq

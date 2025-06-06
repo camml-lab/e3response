@@ -36,7 +36,7 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
     hparams["model"] = cfg["model"]
 
     # save number of model parameters
-    hparams["model/params/total"] = sum(x.size for x in jax.tree_leaves(model.parameters()))
+    hparams["model/params/total"] = sum(x.size for x in jax.tree.leaves(model.parameters()))
 
     hparams["data"] = cfg["data"]
     hparams["trainer"] = cfg["trainer"]

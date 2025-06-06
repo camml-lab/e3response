@@ -23,6 +23,7 @@ keywords = ['machine learning', 'e3nn-jax', 'physics']
 requires-python = '>=3.10'
 dependencies = [
     "ase",
+    "e3md",
     "hydra-core",
     "hydra_colorlog",
     'jax',

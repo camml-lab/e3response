@@ -9,11 +9,12 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import reax
 
-from . import config, keys
+from . import config, electric, keys
 
 __version__ = "0.1.0"
 
 __all__ = (
     "config",
+    "electric",
     "keys",
 )

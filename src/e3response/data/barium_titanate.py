@@ -14,6 +14,8 @@ import reax
 from tensorial import gcnn
 from typing_extensions import override
 
+from e3response import keys
+
 __all__ = ("BtoDataModule",)
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,7 +97,7 @@ class BtoDataModule(reax.DataModule):
                 gcnn.atomic.graph_from_ase,
                 r_max=self._rmax,
                 atom_include_keys=("numbers", "forces", *self._tensors),
-                # global_include_keys=("energy", "stress"),
+                global_include_keys=[keys.EXTERNAL_ELECTRIC_FIELD],
             )
 
             train_graphs = list(map(to_graph, all_train))
@@ -202,6 +204,8 @@ def get_structures(root_dir: pathlib.Path, tensors: Iterable[str]) -> list[ase.A
             for tensor in tensors:
                 tens = get_tensors(root_dir, tensor, structure_number)
                 structure.arrays[tensor] = tens
+
+            structure.arrays[keys.EXTERNAL_ELECTRIC_FIELD] = np.zeros(3)
         except FileNotFoundError:
             continue
 

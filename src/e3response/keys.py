@@ -1,3 +1,6 @@
 from typing import Final
 
-SEED: Final[str] = "seed"
+EXTERNAL_ELECTRIC_FIELD: Final[str] = "external_electric_field"
+POLARIZATION: Final[str] = "polarization"
+POLARIZABILITY: Final[str] = "polarizability"
+BORN_CHARGES: Final[str] = "born_charges"
