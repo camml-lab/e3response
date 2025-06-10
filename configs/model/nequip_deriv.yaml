@@ -78,6 +78,11 @@ model:
     - _target_: e3response.electric.Polarization
       _partial_: True
 
+    # Dielectric tensor
+    - _target_: e3response.electric.DielectricTensor
+      _partial_: True
+      epsilon_0: 1.
+
     # Born effective charges
     - _target_: e3response.electric.BornEffectiveCharges
       _partial_: True

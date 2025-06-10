@@ -20,6 +20,9 @@ __all__ = ("BtoDataModule",)
 
 _LOGGER = logging.getLogger(__name__)
 
+atomic = ("raman_tensors", "born_charges")
+global_tensors = ("dielectric",)
+
 
 class BtoDataModule(reax.DataModule):
     """A barium titanate dataset containing various tensorial quantities created by Lorenzo
@@ -35,8 +38,8 @@ class BtoDataModule(reax.DataModule):
             "BTO_Pm-3m_5atoms_400K_3x3x3_ensemble.tar.gz",
             "BTO_Pm-3m_5atoms_800K_3x3x3.tar.gz",
         ),
-        tensors: tuple[str] = ("raman_tensors", "born_charges"),
-        train_val_test_split: Sequence[Union[int, float]] = (0.85, 0.05, 0.1),
+        tensors: tuple[str] = ("raman_tensors", "born_charges", "dielectric"),
+        train_val_test_split: Sequence[Union[int, float]] = (0.8, 0.1, 0.1),
         batch_size: int = 64,
     ) -> None:
         """Initialize a `SiliconDataModule`.
@@ -93,11 +96,25 @@ class BtoDataModule(reax.DataModule):
                 all_val.extend(val)
                 all_test.extend(test)
 
+            global_include = [keys.EXTERNAL_ELECTRIC_FIELD]
+            atom_include = []
+            for tensor in self._tensors:
+                if tensor in atomic:
+                    atom_include.append(tensor)
+                elif tensor in global_tensors:
+                    global_include.append(tensor)
+                else:
+                    raise ValueError(
+                        f"Unknown tensor type name '{tensor}', choose from "
+                        f"{atomic + global_tensors}"
+                    )
+
             to_graph: Callable[[ase.Atoms], jraph.GraphsTuple] = functools.partial(
                 gcnn.atomic.graph_from_ase,
                 r_max=self._rmax,
-                atom_include_keys=("numbers", "forces", *self._tensors),
-                global_include_keys=[keys.EXTERNAL_ELECTRIC_FIELD],
+                atom_include_keys=("numbers", "forces", *atom_include),
+                global_include_keys=global_include,
+                key_mapping={"dielectric": keys.DIELECTRIC_TENSOR},
             )
 
             train_graphs = list(map(to_graph, all_train))
