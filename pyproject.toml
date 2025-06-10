@@ -33,7 +33,7 @@ dependencies = [
     'e3nn-jax',
     "equinox",
     "reax>=0.2.0",
-    "tensorial@git+https://github.com/camml-lab/tensorial.git@main",
+    "tensorial",
 ]
 
 [project.urls]
