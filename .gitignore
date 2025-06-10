@@ -79,3 +79,6 @@ data/*
 notebooks/*
 
 logs/*
+
+tutorial/reax_logs/
+tutorial/data/*/*
