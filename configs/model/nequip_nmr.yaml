@@ -1,0 +1,92 @@
+_target_: tensorial.ReaxModule
+
+metrics:
+    nmr_tensors_rmse:
+      _target_: tensorial.gcnn.graph_metric
+      metric: rmse
+      predictions: nodes.NMR_tensors_predicted
+      targets: nodes.NMR_tensors
+
+optimizer:
+  _partial_: True
+  _target_: optax.adam
+  learning_rate: 0.1
+
+scheduler:
+  # _target_: optax.schedules.cosine_decay_schedule
+  # init_value: 0.1
+  # decay_steps: 100
+  _target_: optax.exponential_decay
+  init_value: 0.1
+  transition_steps: 500
+  decay_rate: 0.9
+
+loss_fn:
+  _target_: tensorial.gcnn.Loss
+  field: nodes.NMR_tensors_predicted
+  target_field: nodes.NMR_tensors
+  reduction: "sum"
+
+model:
+  _target_: tensorial.nn.Sequential
+  layers:
+    - _target_: tensorial.gcnn.atomic.SpeciesTransform
+      atomic_numbers: ${from_data.atomic_numbers}
+
+    - _target_: tensorial.gcnn.NodewiseEncoding
+      attrs:
+        species:
+          _target_: tensorial.tensors.OneHot
+          num_classes: ${from_data.n_elements}
+
+    - _target_: tensorial.gcnn.EdgeVectors
+
+    - _target_: tensorial.gcnn.EdgewiseEncoding
+      attrs:
+        edge_vectors:
+          _target_: tensorial.tensors.SphericalHarmonic
+          irreps: 0e + 1o + 2e
+          normalise: True
+
+    - _target_: tensorial.gcnn.RadialBasisEdgeEncoding
+      r_max: ${r_max}
+
+    - _target_: tensorial.gcnn.NodewiseLinear
+      field: attributes
+      irreps_out: 8x0o + 8x0e + 8x1o + 8x1e + 8x2o + 8x2e
+
+    - _target_: tensorial.gcnn.NequipLayer
+      irreps_out: 8x0o + 8x0e + 8x1o + 8x1e + 8x2o + 8x2e
+      avg_num_neighbours: ${from_data.avg_num_neighbours}
+
+    - _target_: tensorial.gcnn.NequipLayer
+      irreps_out: 8x0o + 8x0e + 8x1o + 8x1e + 8x2o + 8x2e
+      avg_num_neighbours: ${from_data.avg_num_neighbours}
+
+    - _target_: tensorial.gcnn.NequipLayer
+      irreps_out: 8x0o + 8x0e + 8x1o + 8x1e + 8x2o + 8x2e
+      avg_num_neighbours: ${from_data.avg_num_neighbours}
+
+    # Keep only scalars and reduce the number passing this point
+    - _target_: tensorial.gcnn.NodewiseLinear
+      irreps_out: 4x0e + 4x0o + 4x1e + 4x1o + 4x2e + 4x2o + 2x3o + 2x3e
+
+  # Per-atom NMR tensor
+    - _target_: tensorial.gcnn.NodewiseLinear
+      irreps_out: 1x0e + 1x1e + 1x2e
+      out_field: NMR_tensors_predicted
+
+    - _target_: tensorial.gcnn.NodewiseDecoding
+      in_field: NMR_tensors_predicted
+      attrs:
+        NMR_tensors_predicted:
+          _target_: tensorial.CartesianTensor
+          formula: ij
+          # formula: ijk=ikj
+          i: 1o
+          j: 1o
+
+    - _target_: tensorial.gcnn.IndexedRescale
+      num_types: ${from_data.n_elements}
+      field: nodes.NMR_tensors_predicted
+      index_field: nodes.species

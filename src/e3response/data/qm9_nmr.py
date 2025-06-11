@@ -102,7 +102,8 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         self._to_graph: Callable[[ase.Atoms], jraph.GraphsTuple] = functools.partial(
             gcnn.atomic.graph_from_ase,
             r_max=self._rmax,
-            atom_include_keys=self._atom_keys,
+            # atom_include_keys=self._atom_keys,
+            atom_include_keys=("numbers", *self._atom_keys),
         )
 
         # Data
@@ -126,7 +127,7 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                     _LOGGER.info(f"{archive_name} already present and valid at {archive_path}")
             else:
                 _LOGGER.info(f"{archive_name} not found.")
-                self._download_file(url, archive_path)
+                self._download_file(archive_name, url, archive_path)
 
             structures = self._extract_archive_zip(archive_path, limit=self._limit)
             self._data.extend(structures)
@@ -169,7 +170,7 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
             # selecting .log files
             log_files = [f for f in zip_ref.namelist() if f.endswith(".log")]
 
-            for log_file in tqdm.tqdm(log_files):
+            for log_file in tqdm.tqdm(log_files, desc="EXTRACT ZIP"):
 
                 if limit is not None and len(structures) >= limit:
                     break
@@ -279,7 +280,7 @@ def create_molecule_data(log_file):
 
 
 def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atoms]:
-    _LOGGER.info("Parsing Gaussian .log file: %s", log_path)
+    # _LOGGER.info("Parsing Gaussian .log file: %s", log_path)
 
     try:
         molecule_data = create_molecule_data(log_path)
@@ -368,20 +369,21 @@ class QM9NmrDataModule(reax.DataModule):
         Defaults to `None.
         """
 
-        dataset = QM9NmrDataset(
-            r_max=self._rmax,
-            data_dir=self._data_dir,
-            dataset=self._dataset,
-            atom_keys=self._atom_keys,
-            limit=self._limit,
-        )
+        if not getattr(self, "dataset", None):
+            self.dataset = QM9NmrDataset(
+                r_max=self._rmax,
+                data_dir=self._data_dir,
+                dataset=self._dataset,
+                atom_keys=self._atom_keys,
+                limit=self._limit,
+            )
 
         # load and split dataset only if not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
 
             # Split up the graphs into sets
             train, val, test = reax.data.random_split(
-                stage.rng, dataset=dataset, lengths=self._train_val_test_split
+                stage.rng, dataset=self.dataset, lengths=self._train_val_test_split
             )
 
             calc_padding = functools.partial(
