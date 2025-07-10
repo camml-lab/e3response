@@ -1,25 +1,26 @@
 _target_: tensorial.ReaxModule
 
-jit: True
-
 optimizer:
   _partial_: True
   _target_: optax.adam
   learning_rate: 0.001
-#
-#scheduler:
-#  _target_: optax.schedules.cosine_decay_schedule
-#  init_value: 0.1
-#  decay_steps: 100
+
+scheduler:
+  _target_: optax.schedules.cosine_decay_schedule
+  init_value: 0.1
+  decay_steps: 100
 
 loss_fn:
-  _target_: e3response.losses.response_loss
-  energy: false
-  forces: false
-  dielectric_tensor: true
-  born_charges: true
-  raman_tensors: true
+  _target_: tensorial.gcnn.WeightedLoss
+  weights: [ 1000., 1. ]
+  loss_fns:
+    - _target_: tensorial.gcnn.Loss
+      field: nodes.born_charges_predicted
+      target_field: nodes.born_charges
 
+    - _target_: tensorial.gcnn.Loss
+      field: nodes.raman_tensors_predicted
+      target_field: nodes.raman_tensors
 
 model:
   _target_: tensorial.nn.Sequential
@@ -27,15 +28,14 @@ model:
     - _target_: tensorial.gcnn.atomic.SpeciesTransform
       atomic_numbers: ${from_data.atomic_numbers}
 
-    - _target_: tensorial.gcnn.NodewiseEmbedding
+    - _target_: tensorial.gcnn.NodewiseEncoding
       attrs:
         species:
           _target_: tensorial.tensors.OneHot
           num_classes: ${from_data.n_elements}
-        globals.external_electric_field:
-          _target_: tensorial.tensors.SphericalHarmonic
-          irreps: 0e + 1o
-          normalise: True
+        external_electric_field:
+          _target_: tensorial.tensors.AsIrreps
+          irreps: 1x1e
 
     - _target_: tensorial.gcnn.EdgeVectors
 
@@ -71,25 +71,14 @@ model:
 
     - _target_: tensorial.gcnn.NodewiseLinear
       irreps_out: 1x0e
-      out_field: predicted_energy # Per-atom energy
+      out_field: energy # Per-atom energy
 
     # Final total energy
     - _target_: tensorial.gcnn.NodewiseReduce
-      field: predicted_energy
+      field: energy
       out_field: predicted_energy  # Global energy
 
-    # Polarization
-    #    - _target_: e3response.electric.Polarization
-    #      _partial_: True
-    #
-    # Dielectric tensor
-    - _target_: e3response.electric.DielectricTensor
-      _partial_: True
-
-    #    # Born effective charges
-    - _target_: e3response.electric.BornCharges
-      _partial_: True
-
-    #    # Raman tensors
-    - _target_: e3response.electric.RamanTensors
-      _partial_: True
+    # Per-atom induced magnetic field
+    - _target_: tensorial.gcnn.NodewiseLinear
+      irreps_out: 1x1o
+      out_field: predicted_induced_field

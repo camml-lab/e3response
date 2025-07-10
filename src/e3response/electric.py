@@ -1,84 +1,147 @@
-from collections.abc import Callable
-from typing import Union
+import math
 
 from flax import linen
 import jax
 import jax.numpy as jnp
 import jaxtyping as jt
 import jraph
-from tensorial import gcnn
+from tensorial import gcnn, nn_utils
 from tensorial.gcnn import atomic
 from tensorial.gcnn.keys import predicted
 import tensorial.typing as tt
 
 from . import keys
 
-__all__ = "Polarization", "BornEffectiveCharges", "DielectricTensor"
+__all__ = "Polarization", "BornCharges", "DielectricTensor"
+
+# Global quantities
+ElectricFieldArray = jt.Float[tt.ArrayType, "num_graphs α"]
+PolarizationArray = jt.Float[tt.ArrayType, "num_graphs α"]
+DielectricTensorArray = jt.Float[tt.ArrayType, "num_graphs α b"]
+# Per-atom quantities
+PositionsArray = jt.Float[tt.ArrayType, "num_atoms γ"]
+BornEffectiveChargesArray = jt.Float[tt.ArrayType, "num_atoms α γ"]
+RamanTensorsArray = jt.Float[tt.ArrayType, "num_atoms γ α β"]
 
 
-def polarization(
-    energy_fn: gcnn.GraphFunction,
-    energy_field: str = atomic.TOTAL_ENERGY,
-    efield_field: str = keys.EXTERNAL_ELECTRIC_FIELD,
-    return_graph: bool = True,
-) -> Callable:
-    grad = gcnn.grad(
-        of=f"globals.{energy_field}", wrt=f"globals.{efield_field}", sign=-1, has_aux=True
-    )(energy_fn)
-
-    def _calc(
-        graph: jraph.GraphsTuple, evaluate_at: tt.ArrayType
-    ) -> Union[tt.ArrayType, tuple[tt.ArrayType, jraph.GraphsTuple]]:
-        res = grad(graph, evaluate_at)
-        polarizations: jt.Float[tt.ArrayType, "g α"] = res[0]
-        if return_graph:
-            return polarizations, res[1]
-
-        return polarizations
-
-    return _calc
-
-
-def dielectric_tensor(
-    energy_fn: gcnn.GraphFunction,
-    energy_field: str = atomic.TOTAL_ENERGY,
-    external_field_key: str = keys.EXTERNAL_ELECTRIC_FIELD,
-    epsilon_0: float = 8.8541878128e-12,  # F/m
-    include_identity: bool = True,
-    return_graph: bool = True,
-):
+class Polarization(linen.Module):
     """
-    Returns a function that computes the (relative) dielectric tensor by differentiating
-    the energy with respect to the applied electric field.
+    Module for computing the macroscopic polarization vector as the negative derivative
+    of the total energy with respect to an external electric field.
 
-    This function first computes the polarization as the negative gradient of the energy
-    with respect to the external electric field, and then computes the Jacobian of that
-    polarization with respect to the electric field. This corresponds to the second derivative
-    of the energy with respect to the field:
+    In the context of linear response theory, the polarization **P** is defined as:
 
-        ε_ij = (1 / ε₀) * ∂²E / ∂E_i ∂E_j
+        P_α = -∂E / ∂ε_α
 
-    If `include_identity=True`, the identity matrix is added to the resulting tensor,
-    yielding the relative dielectric tensor (ε_r = χ + I), assuming linear response
-    around vacuum.
+    where:
+    - E is the total energy of the system,
+    - ε_α is the α-component of the externally applied electric field,
+    - The minus sign arises because the system lowers its energy in response to the applied field.
+
+    This module evaluates the gradient of the total energy with respect to the electric field
+    and returns the polarization as a global (graph-level) vector of shape `(3,)`.
+
+    The calculation is done by automatic differentiation of `energy_fn` with respect to
+    `globals.[electric_field_key]`. The resulting polarization vector is stored in the graph
+    under `globals[out_key]`.
 
     Parameters
     ----------
     energy_fn : gcnn.GraphFunction
-        A function that computes the total energy of a system given a graph input.
-    energy_field : str, optional
-        The field name under which the total energy is stored in the graph.
-        Default is `atomic.TOTAL_ENERGY`.
-    external_field_key : str, optional
-        The field name used for the applied external electric field in the graph.
+        A function that computes the total energy of the system from a graph input.
+    energy_key : str, optional
+        The field name under which the total energy is stored in the graph's globals.
+        Defaults to `predicted(atomic.keys.ENERGY)`.
+    electric_field_key : str, optional
+        The field name under which the external electric field is stored in the graph's globals.
+        Defaults to `keys.EXTERNAL_ELECTRIC_FIELD`.
+    out_key : str, optional
+        The field name under which to store the computed polarization in the graph's globals.
+        Defaults to `predicted(keys.POLARIZATION)`.
+
+    Returns
+    -------
+    jraph.GraphsTuple
+        A graph with an additional field `globals[out_key]` storing the computed polarization
+        vector of shape `(3,)` for each graph in the batch.
+    """
+
+    energy_fn: gcnn.GraphFunction
+    energy_key: str = predicted(atomic.keys.ENERGY)
+    electric_field_key: str = keys.EXTERNAL_ELECTRIC_FIELD
+    out_key: str = predicted(keys.POLARIZATION)
+
+    def setup(self) -> None:
+        # pylint: disable=attribute-defined-outside-init
+        # Define the gradient of the energy wrt electric field function
+        self._calc = gcnn.experimental.diff(
+            self.energy_fn,
+            f"globals.{self.energy_key}:gk",
+            wrt=[f"globals.{self.electric_field_key}:gα"],
+            out=":gα",
+            scale=-1.0,
+            return_graph=True,
+        )
+
+    def __call__(self, graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
+        polarization, graph = self._diff_fn(
+            graph, jnp.zeros_like(graph.globals[keys.EXTERNAL_ELECTRIC_FIELD])
+        )
+        polarization: PolarizationArray = polarization
+
+        if gcnn.keys.CELL in graph.globals:
+            # Normalize to get polarization per unit volume
+            cells: jt.Float[tt.ArrayType, "n_graph 3 3"] = graph.globals[gcnn.keys.CELL]
+            omega: jt.Float[tt.ArrayType, "n_graph"] = jax.vmap(gcnn.calc.cell_volume)(cells)
+            # Mask off to avoid divide-by-zero
+            graph_mask = nn_utils.prepare_mask(graph.globals.get(keys.MASK), omega)
+            omega = jnp.where(graph_mask, omega, 1.0)
+            polarization = jax.vmap(jnp.divide)(polarization, omega)
+
+        return (
+            gcnn.experimental.update_graph(graph).set(("globals", self.out_key), polarization).get()
+        )
+
+
+class DielectricTensor(linen.Module):
+    """
+    Returns a function that computes the (relative) dielectric tensor from the second
+    derivative of the total energy with respect to the applied external electric field.
+
+    The dielectric tensor ε_ij is related to how the energy of the system responds to
+    perturbations in the electric field. This function computes:
+
+        ε_ij = δ_ij - 4π * ∂²E / ∂E_i ∂E_j
+
+    which is derived by differentiating the polarization vector:
+
+        P_i = -∂E / ∂E_i
+
+    and then evaluating the susceptibility:
+
+        χ_ij = ∂P_i / ∂E_j = -∂²E / ∂E_i ∂E_j
+
+    The returned function computes this susceptibility tensor, and—if `include_identity`
+    is True—adds the identity matrix to yield the **relative dielectric tensor**:
+
+        ε_r = I + 4π χ
+
+    This assumes a linear response around vacuum permittivity (in Gaussian units).
+
+    Parameters
+    ----------
+    energy_fn : gcnn.GraphFunction
+        A function that computes the total energy of a system from a graph representation.
+    energy_key : str, optional
+        The key used to retrieve the total energy from the graph. Default is `atomic.TOTAL_ENERGY`.
+    electric_field_key : str, optional
+        The key under which the external electric field is stored in the graph globals.
         Default is `keys.EXTERNAL_ELECTRIC_FIELD`.
-    epsilon_0 : float, optional
-        Vacuum permittivity in F/m. Default is 8.8541878128e-12.
     include_identity : bool, optional
-        If True, adds the identity matrix to the susceptibility to obtain the
-        relative dielectric tensor. Default is True.
+        If True, adds the identity tensor to the susceptibility to obtain the relative
+        dielectric tensor. Default is True.
     return_graph : bool, optional
-        If True, the returned function also returns the graph used during evaluation.
+        If True, the returned function also returns the graph used for evaluation.
         Otherwise, only the dielectric tensor is returned. Default is True.
 
     Returns
@@ -89,187 +152,183 @@ def dielectric_tensor(
             dielectric(graph: jraph.GraphsTuple, evaluate_at: Array)
                 -> Array of shape (n_graph, 3, 3) or (Array, jraph.GraphsTuple)
 
-        The output is the dielectric tensor for each graph in the batch, computed
-        at the given external electric field.
-    """
-    calc_polarization = polarization(energy_fn, energy_field, external_field_key, return_graph=True)
-
-    def shim(*args, **kwargs):
-        # Create a shim that will sum over the batch before returning
-        res = calc_polarization(*args, **kwargs)
-        return res[0].sum(0), res[1]
-
-    dielectric = jax.jacobian(shim, argnums=1, has_aux=True)
-
-    def _calc(
-        graph: jraph.GraphsTuple, evaluate_at: tt.ArrayType
-    ) -> Union[tt.ArrayType, tuple[tt.ArrayType, jraph.GraphsTuple]]:
-        res = dielectric(graph, evaluate_at)
-        tensor: jt.Float[tt.ArrayType, "n_graph g α"] = res[0].swapaxes(0, 1)
-
-        tensor = tensor / epsilon_0
-        if include_identity:
-            tensor += jnp.eye(3)
-
-        if return_graph:
-            return tensor, res[1]
-
-        return tensor
-
-    return _calc
-
-
-class Polarization(linen.Module):
-    """
-    flax.linen.Module for computing the polarization vector
-    from the total energy as a function of applied electric field.
-
-    This module calculates the polarization vector :math:`\\mathbf{P}`
-    using the first derivative of the total energy with respect to an applied
-    homogeneous electric field.
-
-    The polarization is defined as:
-
-        .. math::
-
-            P_\\alpha = - \\left. \\frac{\\partial E}{\\partial \\mathcal{E}_\\alpha}
-                \\right|_{\\mathcal{E}=0}
-
-    where:
-        - :math:`E` is the total energy of the system,
-        - :math:`\\mathcal{E}` is the applied electric field,
-        - :math:`\\alpha` ∈ {x, y, z} is a Cartesian direction.
-
-    Notes
-    -----
-    The polarization describes the dipole moment per unit volume induced by an external field
-    in the system. This definition corresponds to the *modern theory of polarization* in the
-    context of finite systems or within a linear response framework for periodic systems.
-
-    This implementation assumes that the energy is differentiable with respect to the electric
-    field, and that the polarization is computed in the static (zero-frequency) limit.
+        The output is the dielectric tensor for each graph in the batch, evaluated at
+        the specified external electric field.
     """
 
     energy_fn: gcnn.GraphFunction
-    energy_field = predicted(atomic.keys.ENERGY)
-    out_field = predicted(keys.POLARIZATION)
-
-    def setup(self) -> None:
-        # pylint: disable=attribute-defined-outside-init
-        # Define the gradient of the energy wrt electric field function
-        self._grad_fn = gcnn.grad(
-            of=f"globals.{self.energy_field}",
-            wrt=f"globals.{keys.EXTERNAL_ELECTRIC_FIELD}",
-            sign=-1,
-            has_aux=True,
-        )(self.energy_fn)
-
-    def __call__(self, graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
-        # res = self._grad_fn(graph, jnp.zeros_like(graph.globals[keys.EXTERNAL_ELECTRIC_FIELD]))
-        res = self._grad_fn(graph, graph.globals[keys.EXTERNAL_ELECTRIC_FIELD])
-
-        polarizations: jt.Float[tt.ArrayType, "g α"] = res[0]
-        graph: jraph.GraphsTuple = res[1]
-        updates = gcnn.utils.UpdateGraphDicts(graph)
-        # updates.globals[self.out_field] = e3j.IrrepsArray("1o", polarizations)
-        updates.globals[self.out_field] = polarizations
-
-        return updates.get()
-
-
-class DielectricTensor(linen.Module):
-    """
-    flax.linen.Module for computing the dielectric tensor.
-
-    The dielectric tensor ε is defined as:
-
-        ε_{αβ} = δ_{αβ} - (1/ε₀) * ∂²E / ∂𝔈_α ∂𝔈_β
-
-    where:
-        - E is the total energy,
-        - 𝔈 is the applied electric field,
-        - ε₀ is the vacuum permittivity.
-
-    This module computes the susceptibility (∂P / ∂E), and optionally adds δ_{αβ}
-    and rescales by ε₀ to get the dielectric tensor.
-
-    Notes
-    -----
-    The calculation is done in the static, zero-field limit using autodiff.
-    """
-
-    energy_fn: gcnn.GraphFunction
-    energy_field: str = predicted(atomic.TOTAL_ENERGY)
-    external_field_key: str = keys.EXTERNAL_ELECTRIC_FIELD
-    epsilon_0: float = 8.8541878128e-12  # F/m
+    energy_key: str = predicted(atomic.TOTAL_ENERGY)
+    electric_field_key: str = keys.EXTERNAL_ELECTRIC_FIELD
     include_identity: bool = True
-    out_field: str = predicted(keys.DIELECTRIC_TENSOR)
+    out_key: str = predicted(keys.DIELECTRIC_TENSOR)
+    epsilon_0 = 1.0 / (4.0 * math.pi)  # If using atomic units
 
     def setup(self) -> None:
         # pylint: disable=attribute-defined-outside-init
-        self._calc = dielectric_tensor(
+        self._calc = gcnn.experimental.diff(
             self.energy_fn,
-            energy_field=self.energy_field,
-            external_field_key=self.external_field_key,
-            epsilon_0=self.epsilon_0,
-            include_identity=self.include_identity,
+            f"globals.{self.energy_key}:gk",
+            wrt=[f"globals.{self.electric_field_key}:gα", f"globals.{self.electric_field_key}:gβ"],
+            out=":gαβ",
             return_graph=True,
         )
 
     def __call__(self, graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
         # Evaluate the e-field derivative of the polarizability at zero electric field
-        res = self._calc(graph, jnp.zeros_like(graph.globals[self.external_field_key]))
-        dielectric: jt.Float[tt.ArrayType, "n_graph α β"] = res[0]
-        graph = res[1]
+        derivative, graph = self._calc(graph, graph.globals[self.electric_field_key])
+        dielectric: DielectricTensorArray = -derivative / self.epsilon_0
+
+        if gcnn.keys.CELL in graph.globals:
+            cells: jt.Float[tt.ArrayType, "n_graph 3 3"] = graph.globals[gcnn.keys.CELL]
+            omega: jt.Float[tt.ArrayType, "n_graph"] = jax.vmap(gcnn.calc.cell_volume)(cells)
+            # Mask off to avoid divide-by-zero
+            graph_mask = nn_utils.prepare_mask(graph.globals.get(keys.MASK), omega)
+            omega = jnp.where(graph_mask, omega, 1.0)
+            dielectric = jax.vmap(jnp.divide)(dielectric, omega)
+
+        if self.include_identity:
+            dielectric = jnp.eye(3) + dielectric
 
         # Update the graph and return
-        updates = gcnn.utils.UpdateGraphDicts(graph)
-        updates.globals[self.out_field] = dielectric
-        return updates.get()
+        return (
+            gcnn.experimental.update_graph(graph).set(("globals", self.out_key), dielectric).get()
+        )
 
 
-class BornEffectiveCharges(linen.Module):
+class BornCharges(linen.Module):
     """
-    flax.linen.Module for computing Born effective charge tensors.
+    Module for computing Born effective charge tensors using mixed second derivatives
+    of the total energy with respect to atomic displacements and an applied electric field.
 
-    The Born effective charge tensor Z* for atom κ is defined as:
+    The Born effective charge tensor describes how the macroscopic polarization of a material
+    responds to atomic displacements in the presence of an electric field. It is defined as:
 
-        Z^*_{κ, αβ} = Ω * ∂P_α / ∂u_{κβ}
+        Z*_{i,αγ} = -∂²E / ∂u_{iγ} ∂ε_α
 
     where:
-        - P_α is the α component of the polarization vector,
-        - u_{κβ} is the β component of the displacement of atom κ,
-        - Ω is the volume of the unit cell (optional, may be included externally).
+    - E is the total energy of the system,
+    - u_{iγ} is the displacement of atom i in Cartesian direction γ,
+    - E_α is the α-component of the external electric field,
+    - The negative sign arises because polarization is the negative derivative of energy
+      with respect to the electric field.
 
-    This module computes Z* as the gradient of polarization with respect to atomic positions.
+    This module computes the Born effective charges per atom and stores them in the graph
+    under the key `predicted(keys.BORN_CHARGES)` as a tensor of shape `(3, 3)` for each atom.
+
+    Parameters
+    ----------
+    energy_fn : gcnn.GraphFunction
+        A function that computes the total energy of the system from a graph input.
+    energy_key : str, optional
+        The field name under which the total energy is stored in the graph's globals.
+        Defaults to `predicted(atomic.TOTAL_ENERGY)`.
+    electric_field_key : str, optional
+        The field name under which the external electric field is stored in the graph's globals.
+        Defaults to `keys.EXTERNAL_ELECTRIC_FIELD`.
+
+    Returns
+    -------
+    jraph.GraphsTuple
+        A new graph with Born effective charge tensors attached to each node under
+        `predicted(keys.BORN_CHARGES)`, with shape `(n_nodes, 3, 3)`.
     """
 
-    polarization_fn: gcnn.GraphFunction
-    polarization_field: str = predicted(keys.POLARIZATION)
+    energy_fn: gcnn.GraphFunction
+    energy_key: str = predicted(atomic.TOTAL_ENERGY)
+    electric_field_key: str = keys.EXTERNAL_ELECTRIC_FIELD
 
     def setup(self) -> None:
         # pylint: disable=attribute-defined-outside-init
-        # Compute the Jacobian of polarization with respect to atomic positions
-        self._jacobian_fn = gcnn.jacobian(
-            of=f"globals.{self.polarization_field}",
-            wrt=f"nodes.{gcnn.keys.POSITIONS}",
-            has_aux=True,
-        )(self.polarization_fn)
+        # Define the derivative of the energy
+        self._diff_fn = gcnn.experimental.diff(
+            self.energy_fn,
+            f"globals.{self.energy_key}:gk",
+            wrt=[f"globals.{self.electric_field_key}:gα", f"nodes.{keys.POSITIONS}:Iγ"],
+            out=":Iαγ",
+            return_graph=True,
+        )
 
     def __call__(self, graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
-        res = self._jacobian_fn(graph, graph.nodes[gcnn.keys.POSITIONS])
-        born_tensors: jt.Float[tt.ArrayType, "κ α β"] = res[0].swapaxes(0, 1)
-        graph: jraph.GraphsTuple = res[1]
+        derivative, graph = self._diff_fn(
+            graph,
+            graph.globals[keys.EXTERNAL_ELECTRIC_FIELD],
+            graph.nodes[gcnn.keys.POSITIONS],
+        )
+        bec: BornEffectiveChargesArray = -derivative
 
-        if gcnn.keys.CELL in graph.globals:
-            n_atoms: int = graph.nodes[gcnn.keys.POSITIONS].shape[0]
-            cells: jt.Float[tt.ArrayType, "n_graph 3 3"] = graph.globals[gcnn.keys.CELL]
-            omega = jax.vmap(gcnn.calc.cell_volume)(cells)
-            omega: jt.Float[tt.ArrayType, "κ"] = jnp.repeat(
-                omega, graph.n_node, total_repeat_length=n_atoms
-            )
-            born_tensors = jax.vmap(jnp.multiply)(omega, born_tensors)
+        return (
+            gcnn.experimental.update_graph(graph)
+            .set(("nodes", predicted(keys.BORN_CHARGES)), bec)
+            .get()
+        )
 
-        updates = gcnn.utils.UpdateGraphDicts(graph)
-        updates.nodes[predicted(keys.BORN_CHARGES)] = born_tensors
-        return updates.get()
+
+class RamanTensors(linen.Module):
+    """
+    Module for computing Raman tensors via third derivatives of the total energy
+    with respect to two electric field components and one atomic displacement.
+
+    The Raman tensor quantifies the variation of the dielectric response (polarizability)
+    under atomic displacements. In this implementation, the Raman tensor for each atom is
+    computed as:
+
+        R_{i,γαβ} = -∂³E / ∂u_{iγ} ∂ε_α ∂ε_β
+
+    where:
+    - E is the total energy of the system,
+    - u_{iγ} is the displacement of atom i along Cartesian direction γ,
+    - ε_α and ε_β are components of the applied electric field.
+
+    The output is stored in the graph under the key `predicted(keys.RAMAN_TENSORS)` as a
+    per-node (per-atom) tensor of shape `(3, 3, 3)`.
+
+    Parameters
+    ----------
+    energy_fn : gcnn.GraphFunction
+        A function that computes the total energy of the system from a graph input.
+    energy_key : str, optional
+        The field name under which the total energy is stored in the graph's globals.
+        Defaults to `predicted(atomic.TOTAL_ENERGY)`.
+    electric_field_key : str, optional
+        The field name under which the external electric field is stored in the graph's globals.
+        Defaults to `keys.EXTERNAL_ELECTRIC_FIELD`.
+
+    Returns
+    -------
+    jraph.GraphsTuple
+        A new graph with Raman tensors attached to each node under the key
+        `predicted(keys.RAMAN_TENSORS)`.
+    """
+
+    energy_fn: gcnn.GraphFunction
+    energy_key: str = predicted(atomic.TOTAL_ENERGY)
+    electric_field_key: str = keys.EXTERNAL_ELECTRIC_FIELD
+
+    def setup(self) -> None:
+        # pylint: disable=attribute-defined-outside-init
+        # Define the derivative of the energy
+        self._diff_fn = gcnn.experimental.diff(
+            self.energy_fn,
+            f"globals.{self.energy_key}:gk",
+            wrt=[
+                f"globals.{self.electric_field_key}:gα",
+                f"globals.{self.electric_field_key}:gβ",
+                f"nodes.{keys.POSITIONS}:Iγ",
+            ],
+            out=":Iγαβ",
+            return_graph=True,
+        )
+
+    def __call__(self, graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
+        derivative, graph = self._diff_fn(
+            graph,
+            graph.globals[keys.EXTERNAL_ELECTRIC_FIELD],
+            graph.nodes[gcnn.keys.POSITIONS],
+        )
+        raman: RamanTensorsArray = -derivative
+
+        return (
+            gcnn.experimental.update_graph(graph)
+            .set(("nodes", predicted(keys.RAMAN_TENSORS)), raman)
+            .get()
+        )

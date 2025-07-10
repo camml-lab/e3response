@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from typing import Union
 
 import jax
 import jraph
@@ -11,43 +10,50 @@ from . import keys
 
 
 def response_loss(
-    energy: Union[bool, float] = False,
-    forces: Union[bool, float] = False,
-    polarization_tensors: Union[bool, float] = False,
-    dielectric_tensor: Union[bool, float] = False,
-    born_charges: Union[bool, float] = False,
+    energy: bool | float = False,
+    forces: bool | float = False,
+    polarization_tensors: bool | float = False,
+    dielectric_tensor: bool | float = False,
+    born_charges: bool | float = False,
+    raman_tensors: bool | float = False,
 ) -> Callable[[jraph.GraphsTuple, jraph.GraphsTuple], jax.Array]:
     weights: list[float] = []
     loss_terms = []
 
     if energy:
-        weights.append(energy if isinstance(energy, bool) else 1.0)
+        weights.append(1.0 if isinstance(energy, bool) else energy)
         loss_terms.append(
             gcnn.Loss(f"globals.{predicted(atomic.TOTAL_ENERGY)}", f"globals.{atomic.TOTAL_ENERGY}")
         )
 
     if forces:
-        weights.append(forces if isinstance(forces, bool) else 1.0)
+        weights.append(1.0 if isinstance(forces, bool) else forces)
         loss_terms.append(gcnn.Loss(f"nodes.{predicted(atomic.FORCES)}", f"nodes.{atomic.FORCES}"))
 
     if born_charges:
-        weights.append(born_charges if isinstance(born_charges, bool) else 1.0)
+        weights.append(1.0 if isinstance(born_charges, bool) else born_charges)
         loss_terms.append(
             gcnn.Loss(f"nodes.{predicted(keys.BORN_CHARGES)}", f"nodes.{keys.BORN_CHARGES}")
         )
 
     if polarization_tensors:
-        weights.append(born_charges if isinstance(born_charges, bool) else 1.0)
+        weights.append(1.0 if isinstance(polarization_tensors, bool) else polarization_tensors)
         loss_terms.append(
             gcnn.Loss(f"globals.{predicted(keys.POLARIZATION)}", f"globals.{keys.POLARIZATION}")
         )
 
     if dielectric_tensor:
-        weights.append(born_charges if isinstance(born_charges, bool) else 1.0)
+        weights.append(1.0 if isinstance(dielectric_tensor, bool) else dielectric_tensor)
         loss_terms.append(
             gcnn.Loss(
                 f"globals.{predicted(keys.DIELECTRIC_TENSOR)}", f"globals.{keys.DIELECTRIC_TENSOR}"
             )
+        )
+
+    if raman_tensors:
+        weights.append(1.0 if isinstance(raman_tensors, bool) else raman_tensors)
+        loss_terms.append(
+            gcnn.Loss(f"nodes.{predicted(keys.RAMAN_TENSORS)}", f"nodes.{keys.RAMAN_TENSORS}")
         )
 
     if not loss_terms:
@@ -57,6 +63,6 @@ def response_loss(
         )
 
     if loss_terms:
-        return gcnn.WeightedLoss(weights, loss_terms)
+        return gcnn.WeightedLoss(loss_terms, weights)
 
     return loss_terms[0]

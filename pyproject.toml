@@ -33,7 +33,7 @@ dependencies = [
     'e3nn-jax',
     "equinox",
     "reax>=0.2.0",
-    "tensorial",
+    "tensorial>=0.4.2",
 ]
 
 [project.urls]

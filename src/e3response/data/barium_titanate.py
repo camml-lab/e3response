@@ -87,6 +87,9 @@ class BtoDataModule(reax.DataModule):
                 output_dir = self._extract_tarball(archive)
 
                 structures = get_structures(output_dir, self._tensors)
+                if not structures:
+                    _LOGGER.warning("No structure extracted from archive `%s`, skipping", archive)
+                    continue
 
                 # Split up the graphs into sets
                 train, val, test = reax.data.random_split(
