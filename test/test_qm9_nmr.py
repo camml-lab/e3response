@@ -1,16 +1,16 @@
 import numpy as np
 import pytest
-from reax import Generator, Stage
+import reax
 
-from e3response.data.qm9_nmr import DATASET_URLS, QM9NmrDataModule, QM9NmrDataset
+from e3response.data.qm9_nmr import DATASET_URLS, Qm9NmrDataModule, Qm9NmrDataset
 
 
 @pytest.mark.parametrize("dataset_name", list(DATASET_URLS.keys()))
 def test_qm9mrdataset_graphs_contain_expected_keys(dataset_name):
-    dataset = QM9NmrDataset(
+    dataset = Qm9NmrDataset(
         dataset=dataset_name,
         atom_keys=["species", "anisotropy"],
-        limit=5,
+        limit=10,
     )
     assert len(dataset) > 0
 
@@ -29,23 +29,31 @@ def test_qm9mrdataset_graphs_contain_expected_keys(dataset_name):
             3,
             3,
         ), f"Wrong NMR tensor shape in graph {i} for dataset {dataset_name}"
+        assert (
+            "NMR_tensors" in graph.nodes
+        ), f"Graph {i} lacks 'NMR_tensors' for dataset {dataset_name}"
+        assert isinstance(
+            graph.nodes["mu"], np.ndarray
+        ), f"'mu' in graph {i} is not a numpy array for dataset {dataset_name}"
+        print(graph.nodes["mu"])
 
 
 @pytest.mark.parametrize("dataset_name", list(DATASET_URLS.keys()))
 def test_qm9_nmr_dataloader_outputs_correct_graphs(dataset_name):
-    dm = QM9NmrDataModule(
+    dm = Qm9NmrDataModule(
         dataset=dataset_name,
-        limit=20,
-        batch_size=8,
+        train_val_test_split=(0.6, 0.2, 0.2),
+        limit=5,
+        batch_size=1,
     )
 
-    class DummyStage(Stage):
+    class DummyStage(reax.Stage):
         def __init__(self):
             super().__init__(
                 name="dummystage",
                 module=None,
                 strategy=None,
-                rng=Generator(seed=42),
+                rng=reax.Generator(seed=42),
             )
 
         def _step(self, batch, state):
@@ -80,3 +88,12 @@ def test_qm9_nmr_dataloader_outputs_correct_graphs(dataset_name):
             3,
             3,
         ), f"Last dims of 'NMR_tensors' must be (3,3), got {nmr_tensors.shape[-2:]}"
+
+        # Check mu
+        assert "mu" in batch.nodes, f"{loader_fn} batch missing 'mu'"
+        mu = batch.nodes["mu"]
+        print(mu)
+
+        assert isinstance(mu, np.ndarray), f"'mu' in {loader_fn} is not a numpy array"
+        assert mu.ndim == 1, f"'mu' in {loader_fn} has wrong shape {mu.shape}, expected 1D array"
+        assert not np.any(np.isnan(mu)), f"'mu' in {loader_fn} contains NaNs"

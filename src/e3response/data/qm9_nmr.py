@@ -1,5 +1,6 @@
 import collections
 import functools
+from functools import lru_cache
 import logging
 import os
 import pathlib
@@ -20,7 +21,9 @@ from tensorial import gcnn
 import tqdm
 from typing_extensions import override
 
-__all__ = ("QM9NmrDataset", "QM9NmrDataModule")
+from e3response import keys
+
+__all__ = ("Qm9NmrDataset", "Qm9NmrDataModule")
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,8 +38,17 @@ DATASET_URLS = {
     "DMSO": "https://nomad-lab.eu/prod/rae/api/raw/query?dataset_id=417HCiXDRhC22th2aE4Xzw",
 }
 
+# Nuclear magnetic moments dict
+mu_dict = {
+    "H": 2.792847351,  # 1H
+    "C": 0.702369,  # 13C
+    "N": -0.2830569,  # 15N
+    "O": -1.893543,  # 17O
+    "F": 2.628321,  # 19F
+}
 
-class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
+
+class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
     """QM9-NMR dataset in different solvents containing graphs with full NMR tensors and related quantities (optional)"""
 
     def __init__(
@@ -76,9 +88,7 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         self._rmax = r_max
         self._data_dir: Final[str] = data_dir
         self._limit = limit
-        default_key = [
-            "NMR_tensors",
-        ]
+        default_keys = ["NMR_tensors", "mu"]
         possible_keys = [
             "ind",
             "N",
@@ -97,12 +107,13 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                 f"Invalid atom_keys: {invalid_keys}. " f"Allowed keys are: {possible_keys}"
             )
 
-        self._atom_keys = list(set(default_key).union(atom_keys or []))
+        self._atom_keys = list(set(default_keys).union(atom_keys or []))
 
         self._to_graph: Callable[[ase.Atoms], jraph.GraphsTuple] = functools.partial(
             gcnn.atomic.graph_from_ase,
             r_max=self._rmax,
-            atom_include_keys=self._atom_keys,
+            atom_include_keys=("numbers", *self._atom_keys),
+            global_include_keys=[keys.EXTERNAL_MAGNETIC_FIELD],
         )
 
         # Data
@@ -126,34 +137,33 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                     _LOGGER.info(f"{archive_name} already present and valid at {archive_path}")
             else:
                 _LOGGER.info(f"{archive_name} not found.")
-                self._download_file(url, archive_path)
+                self._download_file(archive_name, url, archive_path)
 
             structures = self._extract_archive_zip(archive_path, limit=self._limit)
             self._data.extend(structures)
 
+    @lru_cache(maxsize=None)
+    def _get_graph(self, index):
+        return self._to_graph(self._data[index])
+
     def __getitem__(self, index):
-        return self._to_graph(self._data[index])  # translation in graphs on demand
+        return self._get_graph(index)
 
     def __len__(self):
         return len(self._data)
 
     def _download_file(self, name: str, url: str, path: str) -> None:
         _LOGGER.info(f"\nDownloading {name} from {url} ...")
-        try:
-            with urllib.request.urlopen(url) as response:  # nosec B310
-                chunk_size = 8192  # 8 KB per chunk
 
-                with open(path, "wb") as out_file:
-                    progress = tqdm.tqdm(
-                        total=0, unit="B", unit_scale=True, desc=os.path.basename(path)
-                    )
-                    while True:
-                        chunk = response.read(chunk_size)
-                        if not chunk:
-                            break
-                        out_file.write(chunk)
-                        progress.update(len(chunk))
-                    progress.close()
+        try:
+            with tqdm.tqdm(unit="B", unit_scale=True, desc=os.path.basename(path)) as progress_bar:
+
+                def reporthook(block_num, block_size, total_size):
+                    if progress_bar.total is None and total_size > 0:
+                        progress_bar.total = total_size
+                    progress_bar.update(block_size)
+
+                urllib.request.urlretrieve(url, filename=path, reporthook=reporthook)  # nosec B310
 
             _LOGGER.info(f"\nDownload completed: {path}")
 
@@ -169,7 +179,7 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
             # selecting .log files
             log_files = [f for f in zip_ref.namelist() if f.endswith(".log")]
 
-            for log_file in tqdm.tqdm(log_files):
+            for log_file in tqdm.tqdm(log_files, desc="EXTRACT ZIP"):
 
                 if limit is not None and len(structures) >= limit:
                     break
@@ -189,7 +199,7 @@ class QM9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         return structures
 
 
-def create_molecule_data(log_file):
+def _create_molecule_data(log_file):
     try:
         gaussian_output = gaussian.GaussianOutput(log_file)
 
@@ -279,10 +289,10 @@ def create_molecule_data(log_file):
 
 
 def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atoms]:
-    _LOGGER.info("Parsing Gaussian .log file: %s", log_path)
+    # _LOGGER.info("Parsing Gaussian .log file: %s", log_path)
 
     try:
-        molecule_data = create_molecule_data(log_path)
+        molecule_data = _create_molecule_data(log_path)
         if molecule_data is None:
             _LOGGER.warning("No valid structure in %s", log_path.name)
             return None
@@ -303,7 +313,12 @@ def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atom
         atoms.arrays["anisotropy"] = np.array(molecule_data["anisotropy"])
         atoms.arrays["eigenvalues"] = np.array(molecule_data["eigenvalues"])
 
-        # print(atoms.arrays["anisotropy"])
+        species = molecule_data["species"]
+        mu_values = np.array([mu_dict[s] for s in species])
+        atoms.arrays["mu"] = mu_values
+        atoms.arrays[keys.EXTERNAL_MAGNETIC_FIELD] = np.zeros(3)
+
+        # print(atoms.arrays["mu"])
 
         return atoms
 
@@ -312,7 +327,7 @@ def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atom
         return None
 
 
-class QM9NmrDataModule(reax.DataModule):
+class Qm9NmrDataModule(reax.DataModule):
     """QM9-NMR data module containing graphs with full NMR tensors and related quantities subdivided in train/val/test and batches"""
 
     _max_padding: gcnn.data.GraphPadding = None
@@ -368,20 +383,21 @@ class QM9NmrDataModule(reax.DataModule):
         Defaults to `None.
         """
 
-        dataset = QM9NmrDataset(
-            r_max=self._rmax,
-            data_dir=self._data_dir,
-            dataset=self._dataset,
-            atom_keys=self._atom_keys,
-            limit=self._limit,
-        )
+        if not getattr(self, "dataset", None):
+            self.dataset = Qm9NmrDataset(
+                r_max=self._rmax,
+                data_dir=self._data_dir,
+                dataset=self._dataset,
+                atom_keys=self._atom_keys,
+                limit=self._limit,
+            )
 
         # load and split dataset only if not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
 
             # Split up the graphs into sets
             train, val, test = reax.data.random_split(
-                stage.rng, dataset=dataset, lengths=self._train_val_test_split
+                stage.rng, dataset=self.dataset, lengths=self._train_val_test_split
             )
 
             calc_padding = functools.partial(
