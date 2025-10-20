@@ -6,8 +6,8 @@ import os
 import pathlib
 import re
 import tempfile
-import types
-from typing import Any, Callable, Final, Optional, Sequence, TypedDict, Union
+from typing import Any, Callable, Final, Optional, Sequence, Union
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -49,7 +49,10 @@ mu_dict = {
 
 
 class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
-    """QM9-NMR dataset in different solvents containing graphs with full NMR tensors and related quantities (optional)"""
+    """
+    QM9-NMR dataset in different solvents containing graphs
+    with full NMR tensors and related quantities (optional).
+    """
 
     def __init__(
         self,
@@ -65,7 +68,8 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         :param r_max: Maximum cutoff radius for graph construction.
         :param data_dir: Directory where dataset archives are stored.
         :param dataset: List of dataset names containing gaussian raw data.
-        :param atom_keys: name(s) of atom key(s) to extract in the graphs, either a string (for one key) or a list/tuple of strings.
+        :param tensors: Name(s) of tensor(s) to extract, either a string
+                        (for one tensor) or a list/tuple of strings.
         :param limit: Maximum number of structures to load as graphs.
         """
         super().__init__()
@@ -129,20 +133,24 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                         zip_ref.testzip()
                 except (zipfile.BadZipFile, zipfile.LargeZipFile, IOError) as e:
                     _LOGGER.warning(
-                        f"{archive_name} is corrupted or unreadable: {e}, removing corrupted archive ..."
+                        "%s is corrupted or unreadable: %s, removing corrupted archive ...",
+                        archive_name,
+                        e,
                     )
                     os.remove(archive_path)
                     self._download_file(archive_name, url, archive_path)
                 else:
-                    _LOGGER.info(f"{archive_name} already present and valid at {archive_path}")
+                    _LOGGER.info("%s already present and valid at %s.", archive_name, archive_path)
             else:
-                _LOGGER.info(f"{archive_name} not found.")
+                _LOGGER.info("%s not found.", archive_name)
                 self._download_file(archive_name, url, archive_path)
 
             structures = self._extract_archive_zip(archive_path, limit=self._limit)
             self._data.extend(structures)
 
-    @lru_cache(maxsize=None)
+        self._data_tuple = tuple(self._data)
+
+    @lru_cache(maxsize=None)  # pylint: disable=method-cache-max-size-none
     def _get_graph(self, index):
         return self._to_graph(self._data[index])
 
@@ -153,22 +161,25 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         return len(self._data)
 
     def _download_file(self, name: str, url: str, path: str) -> None:
-        _LOGGER.info(f"\nDownloading {name} from {url} ...")
+        _LOGGER.info("\nDownloading %s from %s ...", name, url)
 
         try:
             with tqdm.tqdm(unit="B", unit_scale=True, desc=os.path.basename(path)) as progress_bar:
 
-                def reporthook(block_num, block_size, total_size):
+                def reporthook(_block_num, block_size, total_size):
                     if progress_bar.total is None and total_size > 0:
                         progress_bar.total = total_size
                     progress_bar.update(block_size)
 
                 urllib.request.urlretrieve(url, filename=path, reporthook=reporthook)  # nosec B310
 
-            _LOGGER.info(f"\nDownload completed: {path}")
+            _LOGGER.info("\nDownload completed: %s", path)
 
-        except Exception as e:
-            _LOGGER.error(f"\nError during download: {e}")
+        except urllib.error.URLError as e:
+            _LOGGER.error("Network error during download of %s: %s", name, e)
+
+        except OSError as e:
+            _LOGGER.error("Filesystem error while writing %s: %s", path, e)
 
     def _extract_archive_zip(self, zip_path: str, limit: Optional[int] = None) -> list:
 
@@ -199,6 +210,7 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         return structures
 
 
+# pylint: disable=R1710
 def _create_molecule_data(log_file):
     try:
         gaussian_output = gaussian.GaussianOutput(log_file)
@@ -210,7 +222,7 @@ def _create_molecule_data(log_file):
         structure = gaussian_output.final_structure
 
         # extraction of data from .log file
-        with open(log_file, "r") as file:
+        with open(log_file, "r", encoding="utf-8") as file:
             log_data = file.read()
 
         shielding_pattern = (
@@ -232,35 +244,25 @@ def _create_molecule_data(log_file):
 
         matches = re.findall(shielding_pattern, log_data)
 
-        molecule_data = []
+        atom_list = []
         for match in matches:
             (
                 atom_number,
                 atom_type,
                 isotropic,
                 anisotropy,
-                XX,
-                YX,
-                ZX,
-                XY,
-                YY,
-                ZY,
-                XZ,
-                YZ,
-                ZZ,
+                *tensor_vals,
                 eigenvalue1,
                 eigenvalue2,
                 eigenvalue3,
             ) = match
 
-            tensor_matrix = np.fromstring(
-                " ".join([XX, XY, XZ, YX, YY, YZ, ZX, ZY, ZZ]), dtype=float, sep=" "
-            ).reshape(3, 3)
+            tensor_matrix = np.array([float(x) for x in tensor_vals]).reshape(3, 3)
 
-            molecule_data.append(
+            atom_list.append(
                 {
                     "index": int(atom_number),
-                    "specie": atom_type,
+                    "species": atom_type,
                     "tensor": tensor_matrix,
                     "isotropic": float(isotropic),
                     "anisotropy": float(anisotropy),
@@ -271,11 +273,10 @@ def _create_molecule_data(log_file):
         # final dictionary
         molecule_data = {
             "structure": structure,
-            "tensor": [atom["tensor"] for atom in molecule_data],
-            "isotropic": [atom["isotropic"] for atom in molecule_data],
-            "anisotropy": [atom["anisotropy"] for atom in molecule_data],
-            "eigenvalues": [atom["eigenvalues"] for atom in molecule_data],
-            "species": [atom["specie"] for atom in molecule_data],
+            **{
+                key: [atom[key] for atom in atom_list]
+                for key in ["tensor", "isotropic", "anisotropy", "eigenvalues", "species"]
+            },
             "ind": list(range(len(structure))),
             "N": len(structure),
         }
@@ -283,9 +284,10 @@ def _create_molecule_data(log_file):
         return molecule_data
 
     except ValueError as e:
-        _LOGGER.error(f"Error in file {log_file}: {e}")
-    except Exception as e:
-        _LOGGER.error(f"Error while elaborating file {log_file}: {e}")
+        _LOGGER.error("Error in file %s: %s", log_file, e)
+
+    except (IOError, OSError) as e:
+        _LOGGER.error("File system error while processing %s: %s", log_file, e)
 
 
 def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atoms]:
@@ -322,13 +324,16 @@ def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atom
 
         return atoms
 
-    except Exception as e:
+    except (ValueError, IOError) as e:
         _LOGGER.error("Parsing error for %s: %s", log_path, e)
-        return None
+    return None
 
 
 class Qm9NmrDataModule(reax.DataModule):
-    """QM9-NMR data module containing graphs with full NMR tensors and related quantities subdivided in train/val/test and batches"""
+    """
+    QM9-NMR data module containing graphs with full NMR tensors
+    and related quantities subdivided in train/val/test and batches.
+    """
 
     _max_padding: gcnn.data.GraphPadding = None
 
@@ -347,7 +352,8 @@ class Qm9NmrDataModule(reax.DataModule):
         :param r_max: Maximum cutoff radius for graph construction.
         :param data_dir: Directory where dataset archives are stored.
         :param dataset: List of dataset names containing gaussian raw data.
-        :param tensors: Name(s) of tensor(s) to extract, either a string (for one tensor) or a list/tuple of strings.
+        :param tensors: Name(s) of tensor(s) to extract, either a string
+                        (for one tensor) or a list/tuple of strings.
         :param limit: Maximum number of structures to load as graphs.
         :param train_val_test_split: The train, validation and test split.
         :param batch_size: The batch size. Defaults to 64.
@@ -355,9 +361,10 @@ class Qm9NmrDataModule(reax.DataModule):
         super().__init__()
 
         # Params
-        self._rmax = r_max
         self._data_dir: Final[str] = data_dir
-        self._dataset: Final[str] = dataset
+        self._dataset: Union[str, Sequence[str]] = dataset
+        self.dataset: Optional[Qm9NmrDataset] = None
+        self._rmax = r_max
         self._atom_keys = atom_keys
         self._limit = limit
         self._train_val_test_split: Final[Sequence[Union[int, float]]] = train_val_test_split
@@ -383,7 +390,7 @@ class Qm9NmrDataModule(reax.DataModule):
         Defaults to `None.
         """
 
-        if not getattr(self, "dataset", None):
+        if self.dataset is None:
             self.dataset = Qm9NmrDataset(
                 r_max=self._rmax,
                 data_dir=self._data_dir,
