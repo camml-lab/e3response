@@ -79,3 +79,7 @@ data/*
 notebooks/*
 
 logs/*
+
+# Cartelle di log e runs
+mlruns/
+reax_logs/

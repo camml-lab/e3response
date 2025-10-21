@@ -14,8 +14,8 @@ import zipfile
 import ase
 import jraph
 import numpy as np
-from pymatgen.io import gaussian
-import pymatgen.io.ase
+from pymatgen.io import gaussian  # type: ignore
+import pymatgen.io.ase  # type: ignore
 import reax
 from tensorial import gcnn
 import tqdm
@@ -61,6 +61,8 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         dataset: Union[str, Sequence[str]] = "gasphase",
         atom_keys: Optional[Union[str, Sequence[str]]] = None,
         limit: Optional[int] = None,
+        test_mode: bool = False,
+        test_limit_mb: int = 10,
     ) -> None:
         """
         Initialize the QM9-NMR dataset.
@@ -101,6 +103,8 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
             "anisotropy",
             "eigenvalues",
         ]
+        self._test_mode = test_mode
+        self._test_limit_mb = test_limit_mb
 
         if isinstance(atom_keys, str):
             atom_keys = [atom_keys]
@@ -150,15 +154,23 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
 
         self._data_tuple = tuple(self._data)
 
-    @lru_cache(maxsize=None)  # pylint: disable=method-cache-max-size-none
-    def _get_graph(self, index):
-        return self._to_graph(self._data[index])
+        @lru_cache(maxsize=100000)
+        def _get_graph_worker(index):
+            return self._to_graph(self._data[index])
+
+        self._get_graph_worker = _get_graph_worker
 
     def __getitem__(self, index):
-        return self._get_graph(index)
+        return self._get_graph_worker(index)
 
     def __len__(self):
         return len(self._data)
+
+    def cache_info(self):
+        return self._get_graph_worker.cache_info()
+
+    def clear_cache(self):
+        self._get_graph_worker.cache_clear()
 
     def _download_file(self, name: str, url: str, path: str) -> None:
         _LOGGER.info("\nDownloading %s from %s ...", name, url)
@@ -171,7 +183,20 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                         progress_bar.total = total_size
                     progress_bar.update(block_size)
 
-                urllib.request.urlretrieve(url, filename=path, reporthook=reporthook)  # nosec B310
+                    if getattr(self, "_test_mode", False):
+                        downloaded_mb = progress_bar.n / 1024**2
+                        if downloaded_mb >= getattr(self, "_test_limit_mb", 10):
+                            raise StopIteration
+
+                try:
+                    urllib.request.urlretrieve(
+                        url, filename=path, reporthook=reporthook
+                    )  # nosec B310
+                except StopIteration:
+                    _LOGGER.warning(
+                        "Test mode active: download stopped after %.1f MB.",
+                        getattr(self, "_test_limit_mb", 10),
+                    )
 
             _LOGGER.info("\nDownload completed: %s", path)
 
@@ -210,7 +235,6 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         return structures
 
 
-# pylint: disable=R1710
 def _create_molecule_data(log_file):
     try:
         gaussian_output = gaussian.GaussianOutput(log_file)
@@ -285,9 +309,11 @@ def _create_molecule_data(log_file):
 
     except ValueError as e:
         _LOGGER.error("Error in file %s: %s", log_file, e)
+        raise
 
     except (IOError, OSError) as e:
         _LOGGER.error("File system error while processing %s: %s", log_file, e)
+        raise
 
 
 def get_structure_and_data_from_log(log_path: pathlib.Path) -> Optional[ase.Atoms]:
