@@ -1,23 +1,24 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 import reax
 
 from e3response.data.qm9_nmr import DATASET_URLS, Qm9NmrDataModule, Qm9NmrDataset
 
+mock_dir = Path(__file__).parent / "mock_datasets" / "qm9_nmr"
+
 
 @pytest.mark.parametrize("dataset_name", list(DATASET_URLS.keys()))
-def test_qm9nmr_dataset_and_dataloader(dataset_name, tmp_path):
-    ds = Qm9NmrDataset(
+def test_qm9mrdataset_and_qm9nmrdatamodule(dataset_name):
+    dataset = Qm9NmrDataset(
         dataset=dataset_name,
         atom_keys=["species", "anisotropy"],
-        limit=5,
-        test_mode=True,
-        test_limit_mb=5,
-        data_dir=tmp_path,
+        data_dir=mock_dir,
     )
-    assert len(ds) > 0
+    assert len(dataset) > 0
 
-    for i, graph in enumerate(ds):
+    for i, graph in enumerate(dataset):
         assert graph is not None, f"Graph {i} is None for dataset {dataset_name}"
         assert hasattr(
             graph, "nodes"
@@ -32,15 +33,15 @@ def test_qm9nmr_dataset_and_dataloader(dataset_name, tmp_path):
             3,
             3,
         ), f"Wrong NMR tensor shape in graph {i} for dataset {dataset_name}"
+        assert (
+            "NMR_tensors" in graph.nodes
+        ), f"Graph {i} lacks 'NMR_tensors' for dataset {dataset_name}"
         assert isinstance(
             graph.nodes["mu"], np.ndarray
         ), f"'mu' in graph {i} is not a numpy array for dataset {dataset_name}"
 
     dm = Qm9NmrDataModule(
-        dataset=ds,
-        train_val_test_split=(0.6, 0.2, 0.2),
-        limit=5,
-        batch_size=1,
+        dataset=dataset_name, train_val_test_split=(0.6, 0.2, 0.2), batch_size=1, data_dir=mock_dir
     )
 
     class DummyStage(reax.Stage):
@@ -52,10 +53,19 @@ def test_qm9nmr_dataset_and_dataloader(dataset_name, tmp_path):
                 rng=reax.Generator(seed=42),
             )
 
-        def _step(self, batch, state):
+        def _step(self):
             return {}
 
-        def log(self, state, step_outputs):
+        def log(
+            self,
+            name,
+            value,
+            batch_size=None,
+            prog_bar=None,
+            logger=None,
+            on_step=None,
+            on_epoch=None,
+        ):
             pass
 
     dm.setup(DummyStage())

@@ -61,8 +61,6 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
         dataset: Union[str, Sequence[str]] = "gasphase",
         atom_keys: Optional[Union[str, Sequence[str]]] = None,
         limit: Optional[int] = None,
-        test_mode: bool = False,
-        test_limit_mb: int = 10,
     ) -> None:
         """
         Initialize the QM9-NMR dataset.
@@ -103,8 +101,6 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
             "anisotropy",
             "eigenvalues",
         ]
-        self._test_mode = test_mode
-        self._test_limit_mb = test_limit_mb
 
         if isinstance(atom_keys, str):
             atom_keys = [atom_keys]
@@ -183,20 +179,7 @@ class Qm9NmrDataset(collections.abc.Sequence[jraph.GraphsTuple]):
                         progress_bar.total = total_size
                     progress_bar.update(block_size)
 
-                    if getattr(self, "_test_mode", False):
-                        downloaded_mb = progress_bar.n / 1024**2
-                        if downloaded_mb >= getattr(self, "_test_limit_mb", 10):
-                            raise StopIteration
-
-                try:
-                    urllib.request.urlretrieve(
-                        url, filename=path, reporthook=reporthook
-                    )  # nosec B310
-                except StopIteration:
-                    _LOGGER.warning(
-                        "Test mode active: download stopped after %.1f MB.",
-                        getattr(self, "_test_limit_mb", 10),
-                    )
+                urllib.request.urlretrieve(url, filename=path, reporthook=reporthook)  # nosec B310
 
             _LOGGER.info("\nDownload completed: %s", path)
 
