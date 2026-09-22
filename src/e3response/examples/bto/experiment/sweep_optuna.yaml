@@ -1,0 +1,42 @@
+# @package _global_
+
+# Optuna (TPE) search over the size of the NequIP interaction stack.
+#
+#   pip install 'e3response[sweep]'
+#   e3response train -i examples/bto/train.yaml -m experiment=sweep_optuna debug=toy
+#
+# The objective is `val/loss`, which every ReaxModule logs.  TPE picks new trials from the
+# results of the finished ones, so they are asked for in batches of `n_jobs` and the sweeper waits
+# for a whole batch before choosing the next.  With the default launcher a batch still runs one
+# trial at a time; for real parallelism add a parallel launcher, e.g.
+# `hydra/launcher=submitit_local` (or `submitit_slurm` on a cluster) with `hydra.sweeper.n_jobs=4`.
+# For an exhaustive search see experiment/sweep_grid.yaml.
+
+defaults:
+  - override /hydra/sweeper: optuna
+
+# Metric returned by `main()` and minimised by the sweeper
+optimized_metric: "val/loss"
+
+hydra:
+  sweeper:
+    direction: minimize
+    study_name: nequip
+    storage: null
+    n_trials: 4
+    n_jobs: 1
+    sampler:
+      _target_: optuna.samplers.TPESampler
+      # TPE draws its first `n_startup_trials` (10 by default) at random, so with only 4 trials
+      # over a 16-point grid some seeds repeat a combination.  Seed 8 gives 4 distinct draws that
+      # exercise all four knobs; raise `n_trials` for a real search and the seed stops mattering.
+      seed: 8
+    params:
+      r_max: choice(4.0, 5.0)
+      num_layers: choice(2, 3)
+      mul: choice(8, 16)
+      # A linear readout cannot create rotation orders the features lack, so ell_max should reach
+      # the highest l the readout emits (the Raman head in model/nequip_direct.yaml emits 3o).
+      # Features start as scalars and each layer raises l by at most the top l of the edge
+      # spherical harmonics (1 in this model), so ell_max=3 only matters with num_layers >= 3.
+      ell_max: choice(2, 3)

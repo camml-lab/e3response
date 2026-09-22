@@ -48,6 +48,9 @@ docs = [
     'sphinx',
     'sphinx-autobuild',
 ]
+sweep = [
+    'hydra-optuna-sweeper', # `-m experiment=sweep_optuna`, see examples/bto/experiment/
+]
 dev = [
     'flit',
     'ipython',

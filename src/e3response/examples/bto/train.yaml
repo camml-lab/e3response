@@ -51,6 +51,11 @@ from_data:
 #    _target_: tensorial.gcnn.atomic.EnergyContributionLstsq
 #    type_map: ${from_data.atomic_numbers}
 
+# Metric returned by tensorial.reaxkit.train.main, used as the objective by
+# hyperparameter sweepers (see experiment/sweep_optuna.yaml).
+# Leave null for a plain training run.
+optimized_metric: null
+
 # set False to skip model training
 train:
   min_epochs: 1 # prevents early stopping

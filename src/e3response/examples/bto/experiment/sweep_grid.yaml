@@ -1,0 +1,23 @@
+# @package _global_
+
+# Exhaustive grid over the size of the NequIP interaction stack, using Hydra's built-in basic
+# sweeper (no extra dependencies).  2 x 2 x 2 x 2 = 16 runs.
+#
+#   e3response train -i examples/bto/train.yaml -m experiment=sweep_grid debug=toy
+#
+# Every run is independent, so the whole grid can run at once with a parallel launcher, e.g.
+# `hydra/launcher=submitit_local` (or `submitit_slurm` on a cluster, one job per run).
+# `hydra.sweeper.max_batch_size` caps how many runs are launched together (default: all).
+
+# Not used to pick anything (the basic sweeper ignores return values), but each run then logs
+# its val/loss, which makes comparing the runs easier
+optimized_metric: "val/loss"
+
+hydra:
+  sweeper:
+    params:
+      r_max: 4.0,5.0
+      num_layers: 2,3
+      mul: 8,16
+      # See experiment/sweep_optuna.yaml for why ell_max starts at 2 here
+      ell_max: 2,3
