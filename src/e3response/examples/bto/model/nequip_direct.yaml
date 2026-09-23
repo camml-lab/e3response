@@ -60,20 +60,21 @@ model:
     - _target_: tensorial.gcnn.RadialBasisEdgeEncoding
       r_max: ${r_max}
 
+    # Hidden irreps: ${mul} channels of every irrep up to ${ell_max} (both parities), see
+    # tensorial.make_irreps.  mul, ell_max and num_layers are set in train.yaml.
     - _target_: tensorial.gcnn.NodewiseLinear
       field: attributes
-      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
+      irreps_out:
+        _target_: tensorial.make_irreps
+        mul: ${mul}
+        ell_max: ${ell_max}
 
-    - _target_: tensorial.gcnn.NequipLayer
-      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
-      avg_num_neighbours: ${from_data.avg_num_neighbours}
-
-    - _target_: tensorial.gcnn.NequipLayer
-      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
-      avg_num_neighbours: ${from_data.avg_num_neighbours}
-
-    - _target_: tensorial.gcnn.NequipLayer
-      irreps_out: 16x0o + 16x0e + 16x1o + 16x1e
+    - _target_: tensorial.gcnn.Nequip
+      hidden_irreps:
+        _target_: tensorial.make_irreps
+        mul: ${mul}
+        ell_max: ${ell_max}
+      num_layers: ${num_layers}
       avg_num_neighbours: ${from_data.avg_num_neighbours}
 
     # Keep only scalars and reduce the number passing this point

@@ -48,6 +48,7 @@ docs = [
     'sphinx',
     'sphinx-autobuild',
 ]
+
 dev = [
     'flit',
     'ipython',

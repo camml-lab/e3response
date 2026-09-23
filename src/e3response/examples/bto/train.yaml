@@ -34,6 +34,13 @@ tags: [ "dev" ]
 
 r_max: 5.0
 
+# Size of the NequIP interaction stack in model/nequip_direct.yaml: `mul` channels of every
+# irrep up to `ell_max`, over `num_layers` layers.  Top-level so sweeps can override them
+# directly, e.g. `-m mul=8,16`.
+mul: 16
+ell_max: 1
+num_layers: 3
+
 # Gather data use by the model before training
 from_data:
   n_elements: atomic/num_species
@@ -43,6 +50,11 @@ from_data:
 #  energy_shifts:
 #    _target_: tensorial.gcnn.atomic.EnergyContributionLstsq
 #    type_map: ${from_data.atomic_numbers}
+
+# Metric returned by tensorial.reaxkit.train.main, used as the objective by
+# hyperparameter sweepers (see experiment/sweep_optuna.yaml).
+# Leave null for a plain training run.
+optimized_metric: null
 
 # set False to skip model training
 train:

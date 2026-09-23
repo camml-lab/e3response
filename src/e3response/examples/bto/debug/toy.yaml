@@ -1,0 +1,27 @@
+# @package _global_
+
+# Tiny, CPU-only run for fast local iteration, e.g. to check that a sweep runs end to end.
+#
+# JAX picks its backend the first time it is touched, which is during import, i.e. before Hydra
+# gets a look in.  `hydra.job.env_set` below covers the usual case, but if you see the GPU being
+# used anyway, export it in the shell instead:  JAX_PLATFORMS=cpu e3response train ...
+
+defaults:
+  - override /trainer: cpu
+
+hydra:
+  job:
+    env_set:
+      JAX_PLATFORMS: cpu
+
+train:
+  min_epochs: 0
+  max_epochs: 2
+  check_val_every_n_epoch: 1 # validate every epoch so `val/loss` exists for the objective
+
+# Skip the test loop: a sweep only needs the validation metric
+test: false
+
+listeners:
+  early_stopping:
+    patience: 100 # don't let early stopping cut a 2-epoch run short
